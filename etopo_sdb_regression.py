@@ -17,7 +17,7 @@ import rasterio
 import rasterio.mask
 import regrid_to_sdb as regrid
 from scipy import spatial
-from scipy import ndimage
+from scipy.ndimage import gaussian_filter, median_filter
 from scipy.optimize import lsq_linear
 from skimage import feature, filters
 # from sklearn import svm
@@ -162,22 +162,25 @@ def wavelengths(rgb_dir):
     for band in rgb_list:
         if '492' in band:
             in492 = os.path.join(rgb_dir, band)
-        elif '560' or '559' in band:
+        elif '560' in band or '559' in band:
             in560 = os.path.join(rgb_dir, band)
         else:
-            pass
+            in655 = band
         
     return in492, in560
     
-def truthiness(pSDBg, mask):
+def apply_truthiness(pSDBg, mask):
        
     with rasterio.open(mask) as tf:
-        truthiness = tf.read(1)
+        truthiness_tif = tf.read(1)
         out_meta = tf.meta
             
-    nans = np.where((pSDBg[0,:,:] == 0) | (truthiness == 0) | (truthiness == 1))
-    pSDBg = np.where(pSDBg == 0, np.nan, pSDBg)
+    nans = np.logical_or(np.isnan(pSDBg), np.logical_or(np.logical_or(truthiness_tif == 0, truthiness_tif == 1), pSDBg == 0))
+    
+    pSDBg[nans] = np.nan
     dims = pSDBg.shape
+    
+    # num_zeros = np.count_nonzero(pSDBg == 0)
     
     return pSDBg, nans, dims
 
@@ -204,11 +207,14 @@ def compute_pSDBg(in492, in560, land, truthiness_dir, truthiness):
     
     if truthiness:
         truthiness_mask = pair_with(out_transform, truthiness_dir)   
-        pSDBg, nans, dims = truthiness(pSDBg, truthiness_mask)
+        pSDBg, nans, dims = apply_truthiness(pSDBg, truthiness_mask)
     else:
-        nans = np.where((pSDBg[0,:,:] == 0))
+        nans = np.where(np.isnan(pSDBg[0,:,:]))
         dims = pSDBg.shape               
-                
+    
+    pSDBg = gaussian_filter(pSDBg, sigma=1)
+    # pSDBg = median_filter(pSDBg, size=3)
+    
     return pSDBg, nans, shapes, dims, w, h, out_transform
 
 # shapes the feature inputs into a 2d array where each column is a 1d version of the 2d array/raster image
@@ -233,7 +239,11 @@ def training_data_prep(rgb_dir, truthiness_dir, etopo_full, out_etopo, land,  tr
     if pSDBg_transform != out_transform:
         raise Exception(f'pSDBg transform parameters do not match ETOPO parameters.\nCheck ETOPO located here: {out_etopo}')
     
-    etopo_img = np.where(etopo_img == 0, np.nan, etopo_img)
+    if truthiness:
+        truthiness_mask = pair_with(out_transform, truthiness_dir)   
+        etopo_img, etopo_nans, etopo_dims = apply_truthiness(etopo_img, truthiness_mask)
+    else:
+        etopo_img = np.where(etopo_img == 0, np.nan, etopo_img)
     
     x_min, y_max = out_transform * (0, 0)  
     x_max, y_min = out_transform * (w, h)  
@@ -272,6 +282,18 @@ def training_data_prep(rgb_dir, truthiness_dir, etopo_full, out_etopo, land,  tr
     
     return np.nan_to_num(training_arr), np.nan_to_num(training_labels), dims, extents, nans, out_meta, out_transform
 
+# Define the linear equation y = mx + b
+def linear_eq(params, x):
+    m, b = params
+    return m * x + b
+
+# # Define the constraint functions
+# def lower_bound_constraint(params):
+#     return params[0] - 0.8
+
+# def upper_bound_constraint(params):
+#     return 1.2 - params[0]
+
 
 # %% - regression
 def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_options, save_sdb, sdb_out_dir):
@@ -279,92 +301,120 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
     # for training labels, 1s are nearshore pixels, and 0s are everything else   
     training_arr, training_labels, dims, extents, nans, out_meta, out_transform = training_data_prep(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness)
     
-    
-    x_train = np.reshape(np.delete(training_arr, np.where(training_labels == 0)), (-1, 1))
-    y_train = np.reshape(np.delete(training_labels, np.where(training_labels == 0)), (-1, 1))
+    x_train = np.reshape(np.delete(training_arr, np.where((training_labels == 0) | (training_arr == 0))), (-1, 1))
+    y_train = np.reshape(np.delete(training_labels, np.where((training_labels == 0) | (training_arr == 0))), (-1, 1))
        
-    # print(x_train.shape, y_train.shape)
-    # x_train = x_train.reshape(-1)
-    # y_train = y_train.reshape(-1)
-    # print(x_train.shape, y_train.shape)
+    print(x_train.shape, y_train.shape)
     
     sdb_output = []
     
-    for reg in reg_options:
-        print(f'\nTraining: {reg}')
+    if constrained_lsq:
+        x = x_train.reshape(-1)
+        y = y_train.reshape(-1)
+        print(x_train.shape, y_train.shape)
         
-        if 'SDGReg' in str(reg):
-            reg = make_pipeline(StandardScaler(),reg)
+        # Combine the constraint functions into a single array
+        # constraints = [0.8, 1.2]
+
+        # Initial guess for parameters (slope and intercept)
+        initial_guess = [1, 0]  # <-- Initial guess of [1, 0]
+
+        # Perform least squares linear regression with constraints
+        result = lsq_linear(A=np.vstack([x, np.ones_like(x)]).T, b=y, bounds=([-45, -np.inf], [0, np.inf]), method='bvls', verbose=1) #'trf', verbose=2)
+
+        # Extract the optimized parameters
+        m1, m0 = result.x
         
-        model = reg.fit(x_train, y_train)
-        print('Metrics:')
-        
-        if 'RANSAC' in str(reg):
-            m0 = model.estimator_.intercept_
-            m1 = model.estimator_.coef_[0]
-        else:
-            m0 = model.intercept_
-            m1 = model.coef_
-        r2 = model.score(x_train, y_train)
-        print(f'm0: {m0}')
-        print(f'm1: {m1}')
-        print(f'R2: {r2:.3f}')
-            
-        plt.scatter(x_train, y_train, s=0.8)
-        plt.plot(x_train, m1*x_train + m0, color='red')
-        # plt.text(1.1, -5., 'y = ' + '{:.2f}'.format(m0) + ' + {:.2f}'.format(m1) + 'x' + '\nr2='+'{:.2f}'.format(r2), size=8)
-        plt.xlabel('pSDBg', fontsize=8)
-        plt.ylabel('ETOPO (EGM08 [m])', fontsize=8)
-        plt.xticks(fontsize=8)
-        plt.yticks(fontsize=8)
-        plt.title('ETOPO vs. pSDBg - ' + str(reg).split('(')[0], fontsize=10)
+        # Print the results
+        print(f"Slope (m1): {m1}")
+        print(f"Intercept (m0): {m0}")
+
+        # Plot the data and least squares fit
+        plt.scatter(x, y, label='Data')
+        plt.plot(x, linear_eq(result.x, x), color='red', label='Least Squares Fit')
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.legend()
         plt.show()
-               
-        sdb = m1*training_arr + m0
-        sdb = np.reshape(sdb, dims)[0,:,:]
-        sdb[nans] = np.nan
-        
-        x_min, y_min, x_max, y_max, extent = extents
-        
-        sdb_reg_method = str(reg).split('(')[0]
-        
-        plt.imshow(sdb, extent=extent, vmin=-20., vmax=0.)
-        plt.xlim(x_min, x_max)
-        plt.ylim(y_min, y_max)
-        plt.xlabel('UTM Easting (m)', fontsize=8)
-        plt.ylabel('UTM Northing (m)', fontsize=8)
-        plt.xticks(fontsize=8)
-        plt.yticks(fontsize=8)
-        plt.title(sdb_reg_method + ' SDB', fontsize=10)
-        cbar = plt.colorbar()
-        cbar.ax.tick_params(labelsize=8)
-        cbar.set_label('(EGM08 [m; heights])', fontsize=8)
-        plt.show()
-        
-        out_image = sdb
-        out_meta.update({"driver": "GTiff",
-                          "height": out_image.shape[0],
-                          "width": out_image.shape[1],
-                          "transform": out_transform})
-        
-        sdb[nans] = 0
-        
-        if save_sdb:
-            location = os.path.basename(etopo_name).split('_')[0]
-            sdb_dir = sdb_out_dir + '\\' + location + '_SDB_Output'
-            if not os.path.exists(sdb_dir):
-                os.makedirs(sdb_dir)
+    else:
+        for reg in reg_options:
+            print(f'\nTraining: {reg}')
             
-            sdb_output_name = os.path.join(sdb_dir, location + '_' + sdb_reg_method + '_SDB.tif')
+            if 'SDGReg' in str(reg):
+                reg = make_pipeline(StandardScaler(),reg)
             
-            with rasterio.open(sdb_output_name, 'w', **out_meta) as dst:
-                dst.write(out_image, 1)   
-                
-            print(f'Saved: {sdb_output_name}')
-                
-            dst = None
+            model = reg.fit(x_train, y_train)
+            print('Metrics:')
             
-            sdb_output.append(sdb_output_name)
+            if 'RANSAC' in str(reg):
+                m0 = model.estimator_.intercept_
+                m1 = model.estimator_.coef_[0]
+            else:
+                m0 = model.intercept_
+                m1 = model.coef_
+            r2 = model.score(x_train, y_train)
+            print(f'm0: {m0}')
+            print(f'm1: {m1}')
+            print(f'R2: {r2:.3f}')
+            
+            print(f'Size: {x_train.size}, {y_train.size}')
+            
+            plt.scatter(x_train, y_train, s=0.8)
+            plt.plot(x_train, m1*x_train + m0, color='red')
+            # plt.text(1.1, -5., 'y = ' + '{:.2f}'.format(m0) + ' + {:.2f}'.format(m1) + 'x' + '\nr2='+'{:.2f}'.format(r2), size=8)
+            plt.xlabel('pSDBg', fontsize=8)
+            plt.ylabel('ETOPO (EGM08 [m])', fontsize=8)
+            plt.xticks(fontsize=8)
+            plt.yticks(fontsize=8)
+            plt.title('ETOPO vs. pSDBg - ' + str(reg).split('(')[0], fontsize=10)
+            plt.show()
+                   
+    sdb = m1*training_arr + m0
+    sdb = np.reshape(sdb, dims)[0,:,:]
+    sdb[nans[0,:,:]] = np.nan
+    
+    x_min, y_min, x_max, y_max, extent = extents
+    
+    sdb_reg_method = str(reg).split('(')[0]
+    
+    plt.imshow(sdb, extent=extent, vmin=-20., vmax=0.)
+    plt.xlim(x_min, x_max)
+    plt.ylim(y_min, y_max)
+    plt.xlabel('UTM Easting (m)', fontsize=8)
+    plt.ylabel('UTM Northing (m)', fontsize=8)
+    plt.xticks(fontsize=8)
+    plt.yticks(fontsize=8)
+    plt.title(sdb_reg_method + ' SDB', fontsize=10)
+    cbar = plt.colorbar()
+    cbar.ax.tick_params(labelsize=8)
+    cbar.set_label('(EGM08 [m; heights])', fontsize=8)
+    plt.show()
+    
+    out_image = sdb
+    out_meta.update({"driver": "GTiff",
+                      "height": out_image.shape[0],
+                      "width": out_image.shape[1],
+                      "nodata": 0,
+                      "transform": out_transform})
+    
+    sdb[nans[0,:,:]] = 0
+    
+    if save_sdb:
+        location = os.path.basename(etopo_name).split('_')[0]
+        sdb_dir = sdb_out_dir + '\\' + location + '_SDB_Output'
+        if not os.path.exists(sdb_dir):
+            os.makedirs(sdb_dir)
+        
+        sdb_output_name = os.path.join(sdb_dir, location + '_' + sdb_reg_method + '_SDB.tif')
+        
+        with rasterio.open(sdb_output_name, 'w', **out_meta) as dst:
+            dst.write(out_image, 1)   
+            
+        print(f'Saved: {sdb_output_name}')
+            
+        dst = None
+        
+        sdb_output.append(sdb_output_name)
         
     return sdb_output
     
@@ -399,13 +449,11 @@ def rmsez(sdb, lidar):
         rmse = np.sqrt(np.mean(np.square(differences_flat)))
         rmse95 = rmse * 1.96
         
-        # Plot histogram
-        plt.hist(differences_flat, bins=100, color='royalblue', alpha=0.7, label='Differences')
-        plt.xlim(mean_diff - 5 * std_dev_diff, mean_diff + 5 * std_dev_diff)
+        outliers_removed = differences_flat[abs(differences_flat - mean_diff) <= rmse95]
         
-        # Calculate mean and standard deviation
-        mean_diff = np.mean(differences_flat)
-        std_dev_diff = np.std(differences_flat)
+        # Plot histogram
+        plt.hist(differences_flat, bins=200, color='royalblue', alpha=0.7, label='Differences')
+        plt.xlim(mean_diff - 5 * std_dev_diff, mean_diff + 5 * std_dev_diff)
         
         # Add vertical lines for mean and standard deviation
         plt.axvline(mean_diff, color='navy', linestyle='dashed', linewidth=1, label=f'Mean: {mean_diff:.2f}')
@@ -420,11 +468,16 @@ def rmsez(sdb, lidar):
         # Show the plot
         plt.show()
         
-        plt.imshow(differences)
+        plt.imshow(differences, vmax=10)
+        plt.title('Difference (meters)')
         plt.colorbar()
         plt.show()
+        
+        # Calculate mean and standard deviation
+        mean_diff = np.mean(outliers_removed)
+        std_dev_diff = np.std(outliers_removed)
     
-        return rmse, rmse95
+        return mean_diff, std_dev_diff, rmse, rmse95
     else: 
         raise Exception('Input lidar and SDB do not match')
 
@@ -433,24 +486,30 @@ def rmsez(sdb, lidar):
 
 if __name__ == '__main__':
     
-    rgb_dir = [r'P:\_RSD\Data\ETOPO\Imagery\_without_truthiness']
+    # rgb_dir = [r'P:\_RSD\Data\ETOPO\Imagery\_without_truthiness']
+    rgb_dir = [r'P:\_RSD\Data\ETOPO\Imagery\_saipan']
     shp_dir = [r'P:\_RSD\Data\ETOPO\SHP']
     etopo = r"P:\_RSD\Data\ETOPO\ETOPO\All_ETOPO2022_15s_IceSurf_EXT_01_m100_LZW.tif"
     truthiness_dir = r'P:\_RSD\Data\ETOPO\Truthiness'
     ground_truth = r'P:\_RSD\Data\ETOPO\Ground Truth'
     
-    truthiness = False
-    # truthiness = True
+    # truthiness = False
+    truthiness = True
     compute_sdb = True
-    compute_sdb = False
+    # compute_sdb = False
+    # constrained_lsq = False
+    constrained_lsq = True
     save_sdb = True
-    save_sdb = False
+    # save_sdb = False
     sdb_out_dir = r'P:\_RSD\Data\ETOPO\SDB'
+    # compare = True
+    compare = False
     
     # regression options
+    # https://scikit-learn.org/stable/modules/linear_model.html#ransac-random-sample-consensus
     reg_options = [
                     LinearRegression(), 
-                    RANSACRegressor(random_state=42),
+                    # RANSACRegressor(random_state=42),
                     # TheilSenRegressor(random_state=42),
                     # HuberRegressor(),
                     # Ridge(alpha=1.0),
@@ -472,34 +531,42 @@ if __name__ == '__main__':
                     sdb_output_names = regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_options, save_sdb, sdb_out_dir)
                 
         print(sdb_output_names)
-    
-    # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\CapeCod\usace2018_east_cst_dem_Job922111\usace2018_east_cst_dem_J922111.tif"
-    # sdb = r"P:\_RSD\Data\ETOPO\SDB\CapeCod_SDB_Output\CapeCod_TheilSenRegressor_SDB.tif"
-    # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\CapeCod\CapeCod_lidar.tif"
-    
-    # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyWest_SDB_Output\KeyWest_TheilSenRegressor_SDB.tif"
-    # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyWest\2019_NGS_FL_topobathy_DEM_Irma_Job896369\2019_NGS_FL_topobathy_DEM_Irma_J896369.tif"
-    # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyWest\WestWest_lidar.tif"
-    
-    sdb = r"P:\_RSD\Data\ETOPO\SDB\StCroix_SDB_Output\StCroix_LinearRegression_SDB.tif"
-    inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\StCroix\2019_ngs_topobathy_dem_usvi_Job921533\2019_ngs_topobathy_dem_usvi_J921533.tif"
-    out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\StCroix\StCroix_lidar.tif"
-    
-    # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_RANSACRegressor_SDB.tif"
-    # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\2019_NGS_FL_topobathy_DEM_Irma_Job778026\Job778026_2019_NGS_FL_topobathy_DEM_Irma.tif"
-    # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar.tif"
-    
-    # sdb = r"P:\_RSD\Data\ETOPO\SDB\Ponce_SDB_Output\Ponce_RANSACRegressor_SDB.tif"
-    # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\2019_ngs_topobathy_dem_pr_Job922086\2019_ngs_topobathy_dem_pr_J922086.tif"
-    # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\Ponce_lidar.tif"
-    
-    if not os.path.isfile(out_gt):                
-        outlidar = resample.resample(inlidar, sdb, out_gt)
-    else:
-        outlidar = out_gt
-    
-    rmse, conf = rmsez(sdb, outlidar)
-    print(f'\nSDB vs Ground Truth RMSEz // 95% Confidence:\n{rmse:.3f}m // {conf:.3f}m')
+        
+    if compare:
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\CapeCod\usace2018_east_cst_dem_Job922111\usace2018_east_cst_dem_J922111.tif"
+        # sdb = r"D:\ML\ETOPO\SDB\CapeCod_SDB_Output\CapeCod_RANSACRegressor_SDB.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\CapeCod\CapeCod_lidar.tif"
+        
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyWest_SDB_Output\KeyWest_TheilSenRegressor_SDB.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyWest\2019_NGS_FL_topobathy_DEM_Irma_Job896369\2019_NGS_FL_topobathy_DEM_Irma_J896369.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyWest\WestWest_lidar.tif"
+        
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\StCroix_SDB_Output\StCroix_LinearRegression_SDB.tif"
+        # sdb = r"D:\ML\ETOPO\SDB\StCroix_SDB_Output\StCroix_RANSACRegressor_SDB.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\StCroix\2019_ngs_topobathy_dem_usvi_Job921533\2019_ngs_topobathy_dem_usvi_J921533.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\StCroix\StCroix_lidar.tif"
+        
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_LinearRegression_SDB.tif"
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_RANSACRegressor_SDB.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\2019_NGS_FL_topobathy_DEM_Irma_Job778026\Job778026_2019_NGS_FL_topobathy_DEM_Irma.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar.tif"
+        
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\Ponce_SDB_Output\Ponce_RANSACRegressor_SDB.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\2019_ngs_topobathy_dem_pr_Job922086\2019_ngs_topobathy_dem_pr_J922086.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\Ponce_lidar.tif"
+        
+        sdb = r'P:\_RSD\Data\ETOPO\SDB\Saipan_SDB_Output\Saipan_RANSACRegressor_SDB.tif'
+        inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\cnmi2019_islands_dem_J922112.tif"
+        out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\Saipan_lidar.tif"
+        
+        if not os.path.isfile(out_gt):                
+            outlidar = resample.resample(inlidar, sdb, out_gt)
+        else:
+            outlidar = out_gt
+        
+        mean_diff, std_dev_diff, rmse, rmse95 = rmsez(sdb, outlidar)
+        print(f'\nSDB vs Ground Truth Mean ± Std:\n{mean_diff:.3f} // {std_dev_diff:.3f}')
+        print(f'\nSDB vs Ground Truth RMSEz // 95% Confidence:\n{rmse:.3f}m // {rmse95:.3f}m')
     
     
 # %% - constrained least squares
