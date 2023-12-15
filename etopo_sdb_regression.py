@@ -6,13 +6,16 @@ October 2023
 
 """
 
+import compare_raster as resample
 import fiona
+import geopandas as gpd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import os
 import pandas as pd
 import pickle
+import pyproj
 import rasterio
 import rasterio.mask
 import regrid_to_sdb as regrid
@@ -28,7 +31,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.tree import plot_tree
-import warp_raster as resample
 import warnings
 
 
@@ -37,9 +39,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 def list_inputs(rgb_dir, shp_dir, truthiness_dir):
-    img_dirs = []
-    for loc in rgb_dir:
-        [img_dirs.append(os.path.join(loc, folder)) for folder in os.listdir(loc)]
+    # img_dirs = []
+    # for loc in rgb_dir:
+    #     [img_dirs.append(os.path.join(loc, folder)) for folder in os.listdir(loc)]
         
     maskSHP_dir = []
     for loc in shp_dir:
@@ -47,7 +49,7 @@ def list_inputs(rgb_dir, shp_dir, truthiness_dir):
         
     # true_bathy = [os.path.join(truthiness_dir, tf) for tf in os.listdir(truthiness_dir) if tf.endswith('.tif')]
     
-    return img_dirs, maskSHP_dir
+    return maskSHP_dir
 
 def check_bounds(rgb_dir, shapefile):
     raster = [os.path.join(rgb_dir, r) for r in os.listdir(rgb_dir) if r.endswith('.tif')]
@@ -178,11 +180,11 @@ def apply_truthiness(pSDBg, mask):
     nans = np.logical_or(np.isnan(pSDBg), np.logical_or(np.logical_or(truthiness_tif == 0, truthiness_tif == 1), pSDBg == 0))
     
     pSDBg[nans] = np.nan
-    dims = pSDBg.shape
+    dims = pSDBg[0,:,:].shape
     
     # num_zeros = np.count_nonzero(pSDBg == 0)
     
-    return pSDBg, nans, dims
+    return pSDBg, nans[0,:,:], dims
 
 def compute_pSDBg(in492, in560, land, truthiness_dir, truthiness):
     with fiona.open(land, "r") as shapefile:
@@ -212,38 +214,94 @@ def compute_pSDBg(in492, in560, land, truthiness_dir, truthiness):
         nans = np.where(np.isnan(pSDBg[0,:,:]))
         dims = pSDBg.shape               
     
-    pSDBg = gaussian_filter(pSDBg, sigma=1)
+    # pSDBg = gaussian_filter(pSDBg, sigma=1)
     # pSDBg = median_filter(pSDBg, size=3)
     
-    return pSDBg, nans, shapes, dims, w, h, out_transform
+    pSDBg_output = os.path.join(os.path.dirname(in492), 'pSDBg.tif')
+    
+    with rasterio.open(pSDBg_output, 'w', **out_meta) as dst:
+        dst.write(pSDBg)   
+        
+    print(f'Saved temp file: {pSDBg_output}')
+    blue, green, dst = None, None, None
+    
+    return pSDBg, pSDBg_output, nans, shapes, dims, w, h, out_transform, out_meta
+
+def reproject_toWGS84(land, shapes):
+    # Load the shapefile
+    gdf = gpd.read_file(land)
+    source_crs = gdf.crs
+    target_crs = pyproj.CRS.from_epsg('4326')
+    transformer = pyproj.Transformer.from_crs(source_crs, target_crs, always_xy=True)
+    
+    # Define the list of geometries (in your provided format)
+    geometries = shapes
+    
+    # Reproject each geometry
+    reprojected_geometries = []
+    for geometry in geometries:
+        coordinates = geometry['coordinates'][0]  # Get the coordinates
+        reprojected_coordinates = [transformer.transform(x, y) for x, y in coordinates]  # Reproject
+        reprojected_geometry = {'type': 'Polygon', 'coordinates': [reprojected_coordinates]}
+        reprojected_geometries.append(reprojected_geometry)
+
+    # print(f'Reprojected shapefile geometry from {source_crs} to WGS84 (EPSG 4326)')
+    
+    return reprojected_geometries
 
 # shapes the feature inputs into a 2d array where each column is a 1d version of the 2d array/raster image
 # returns the training data (x-inputs) and training labels (y-inputs) for fitting the model
 # the 'points of interest' (poi) are simply nearshore points from the edge detection and ndwi filtering
-def training_data_prep(rgb_dir, truthiness_dir, etopo_full, out_etopo, land,  truthiness):        
+def training_data_prep(rgb_dir, truthiness_dir, etopo_full, out_pSDBg, land, truthiness):        
     # compute pSDBg
     in492, in560 = wavelengths(rgb_dir)
-    pSDBg, nans, shapes, dims, w, h, pSDBg_transform = compute_pSDBg(in492, in560, land, truthiness_dir, truthiness)
+    pSDBg, pSDBg_output, nans, shapes, dims, w, h, pSDBg_transform, sdb_meta = compute_pSDBg(in492, in560, land, truthiness_dir, truthiness)
+
+    reprojected_geometries = reproject_toWGS84(land, shapes)
     
-    if not os.path.isfile(out_etopo):
-        resampled_etopo = resample.resample(etopo_full, in492, out_etopo)
-        print(f'Resampled ETOPO: {resampled_etopo}')
-    else:
-        resampled_etopo = out_etopo
-        print(f'Using ETOPO: {resampled_etopo}')
+    print('Masking ETOPO to input shapefile geometry...')
     
-    with rasterio.open(resampled_etopo) as etopo:
-        etopo_img, out_transform = rasterio.mask.mask(etopo, shapes, crop=True)
+    # do this before resampling
+    with rasterio.open(etopo_full) as etopo:
+        etopo_img, out_transform = rasterio.mask.mask(etopo, reprojected_geometries, crop=True)
         out_meta = etopo.meta
+        
+    # writing information
+    out_meta.update({"driver": "GTiff",
+                      "dtype": 'float32',
+                      "height": etopo_img.shape[1],
+                      "width": etopo_img.shape[2],
+                      "nodata": 0,
+                      "count": 1,
+                      "transform": out_transform})
     
-    if pSDBg_transform != out_transform:
-        raise Exception(f'pSDBg transform parameters do not match ETOPO parameters.\nCheck ETOPO located here: {out_etopo}')
+    etopo_img[np.isclose(etopo_img, 3.4e+38, atol=1e-6)] = 0
     
-    if truthiness:
-        truthiness_mask = pair_with(out_transform, truthiness_dir)   
-        etopo_img, etopo_nans, etopo_dims = apply_truthiness(etopo_img, truthiness_mask)
+    cropped_etopo = etopo_full.replace('.tif', '_temp.tif')
+    
+    with rasterio.open(cropped_etopo, 'w', **out_meta) as dst:
+        dst.write(etopo_img)   
+        
+    print(f'Saved temp file: {cropped_etopo}')
+    etopo, dst = None, None
+    
+    if not os.path.isfile(out_pSDBg):
+        resampled_pSDBg = resample.resample(pSDBg_output, cropped_etopo, out_pSDBg)
+        print(f'Resampled ETOPO: {resampled_pSDBg}')
     else:
-        etopo_img = np.where(etopo_img == 0, np.nan, etopo_img)
+        resampled_pSDBg = out_pSDBg
+        print(f'Using pSDBg: {resampled_pSDBg}')
+    
+    # print(f'{pSDBg_transform}\n\n{out_transform}\n')
+    
+    # if pSDBg_transform != out_transform:
+    #     raise Exception(f'pSDBg transform parameters do not match ETOPO parameters.\nCheck ETOPO located here: {out_pSDBg}')
+    
+    # if truthiness:
+    #     truthiness_mask = pair_with(pSDBg_transform, truthiness_dir)   
+    #     etopo_img, etopo_nans, etopo_dims = apply_truthiness(etopo_img, truthiness_mask)
+    # else:
+    #     etopo_img = np.where(etopo_img == 0, np.nan, etopo_img)
     
     x_min, y_max = out_transform * (0, 0)  
     x_max, y_min = out_transform * (w, h)  
@@ -275,31 +333,65 @@ def training_data_prep(rgb_dir, truthiness_dir, etopo_full, out_etopo, land,  tr
     cbar.set_label('(Unitless)', fontsize=8)
     plt.show()
     
-    training_arr = np.reshape(pSDBg, (-1, 1))
+    with rasterio.open(resampled_pSDBg, 'r') as src:
+        pSDBg_resampled = src.read()
+        
+    
+    print(pSDBg.shape, etopo_img.shape)
+    
+    training_arr = np.reshape(pSDBg_resampled, (-1, 1))
     training_labels = np.reshape(etopo_img, (-1, 1))
     
     extents = (x_min, y_min, x_max, y_max, extent)
     
-    return np.nan_to_num(training_arr), np.nan_to_num(training_labels), dims, extents, nans, out_meta, out_transform
+    return pSDBg, np.nan_to_num(training_arr), np.nan_to_num(training_labels), dims, extents, nans, sdb_meta, pSDBg_transform
 
-# Define the linear equation y = mx + b
+# linear equation y = mx + b
 def linear_eq(params, x):
     m, b = params
     return m * x + b
 
-# # Define the constraint functions
-# def lower_bound_constraint(params):
-#     return params[0] - 0.8
-
-# def upper_bound_constraint(params):
-#     return 1.2 - params[0]
-
-
+def constrained_lstsq(x_train, y_train):
+    x = x_train.reshape(-1)
+    y = y_train.reshape(-1)
+    
+    # Initial guess for parameters (slope and intercept)
+    initial_guess = [1, 0]  # <-- Initial guess of [1, 0]
+    
+    # Perform least squares linear regression with constraints
+    result = lsq_linear(A=np.vstack([x, np.ones_like(x)]).T, 
+                        b=y, bounds=([-95, -np.inf], [-45, np.inf]), 
+                        method='trf', #'bvls', 
+                        verbose=1) #'trf'
+    m1, m0 = result.x
+    print(f"Slope (m1): {m1:.3f}")
+    print(f"Intercept (m0): {m0:.3f}")
+    
+    y_pred = m1 * x + m0
+    residuals = y - y_pred
+    tss = np.sum((y - np.mean(y))**2)
+    ssr = np.sum(residuals**2)
+    r2 = 1 - (ssr / tss)
+    print(f"R2: {r2:.3f}")
+    
+    # Plot the data and least squares fit
+    plt.scatter(x, y, s=0.8, label='Data')
+    plt.plot(x, linear_eq(result.x, x), color='red', label='Least Squares Fit')
+    plt.xlabel('pSDBg', fontsize=8)
+    plt.ylabel('ETOPO (EGM08 [m])', fontsize=8)
+    plt.xticks(fontsize=8)
+    plt.yticks(fontsize=8)
+    plt.title('ETOPO vs. pSDBg - Constrained Lsq', fontsize=10)
+    plt.legend()
+    plt.show()
+    
+    return m1, m0
+    
 # %% - regression
 def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_options, save_sdb, sdb_out_dir):
     # uses training_data_prep function above to shape the feature inputs
     # for training labels, 1s are nearshore pixels, and 0s are everything else   
-    training_arr, training_labels, dims, extents, nans, out_meta, out_transform = training_data_prep(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness)
+    pSDBg, training_arr, training_labels, dims, extents, nans, sdb_meta, pSDBg_transform = training_data_prep(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness)
     
     x_train = np.reshape(np.delete(training_arr, np.where((training_labels == 0) | (training_arr == 0))), (-1, 1))
     y_train = np.reshape(np.delete(training_labels, np.where((training_labels == 0) | (training_arr == 0))), (-1, 1))
@@ -309,33 +401,8 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
     sdb_output = []
     
     if constrained_lsq:
-        x = x_train.reshape(-1)
-        y = y_train.reshape(-1)
-        print(x_train.shape, y_train.shape)
-        
-        # Combine the constraint functions into a single array
-        # constraints = [0.8, 1.2]
-
-        # Initial guess for parameters (slope and intercept)
-        initial_guess = [1, 0]  # <-- Initial guess of [1, 0]
-
-        # Perform least squares linear regression with constraints
-        result = lsq_linear(A=np.vstack([x, np.ones_like(x)]).T, b=y, bounds=([-45, -np.inf], [0, np.inf]), method='bvls', verbose=1) #'trf', verbose=2)
-
-        # Extract the optimized parameters
-        m1, m0 = result.x
-        
-        # Print the results
-        print(f"Slope (m1): {m1}")
-        print(f"Intercept (m0): {m0}")
-
-        # Plot the data and least squares fit
-        plt.scatter(x, y, label='Data')
-        plt.plot(x, linear_eq(result.x, x), color='red', label='Least Squares Fit')
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.legend()
-        plt.show()
+        m1, m0 = constrained_lstsq(x_train, y_train)
+        sdb_reg_method = 'Constrained Lsq'
     else:
         for reg in reg_options:
             print(f'\nTraining: {reg}')
@@ -368,15 +435,18 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
             plt.yticks(fontsize=8)
             plt.title('ETOPO vs. pSDBg - ' + str(reg).split('(')[0], fontsize=10)
             plt.show()
-                   
-    sdb = m1*training_arr + m0
-    sdb = np.reshape(sdb, dims)[0,:,:]
-    sdb[nans[0,:,:]] = np.nan
+            
+            sdb_reg_method = str(reg).split('(')[0]
+                  
+    pSDBg = np.nan_to_num(np.reshape(pSDBg, (-1, 1)))
+    sdb = m1*pSDBg + m0
+    sdb = np.reshape(sdb, dims)#[0,:,:]
+    sdb[nans] = np.nan
+    
+    
     
     x_min, y_min, x_max, y_max, extent = extents
-    
-    sdb_reg_method = str(reg).split('(')[0]
-    
+       
     plt.imshow(sdb, extent=extent, vmin=-20., vmax=0.)
     plt.xlim(x_min, x_max)
     plt.ylim(y_min, y_max)
@@ -391,13 +461,13 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
     plt.show()
     
     out_image = sdb
-    out_meta.update({"driver": "GTiff",
+    sdb_meta.update({"driver": "GTiff",
                       "height": out_image.shape[0],
                       "width": out_image.shape[1],
                       "nodata": 0,
-                      "transform": out_transform})
+                      "transform": pSDBg_transform})
     
-    sdb[nans[0,:,:]] = 0
+    sdb[nans] = 0
     
     if save_sdb:
         location = os.path.basename(etopo_name).split('_')[0]
@@ -407,7 +477,7 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
         
         sdb_output_name = os.path.join(sdb_dir, location + '_' + sdb_reg_method + '_SDB.tif')
         
-        with rasterio.open(sdb_output_name, 'w', **out_meta) as dst:
+        with rasterio.open(sdb_output_name, 'w', **sdb_meta) as dst:
             dst.write(out_image, 1)   
             
         print(f'Saved: {sdb_output_name}')
@@ -417,77 +487,14 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
         sdb_output.append(sdb_output_name)
         
     return sdb_output
-    
-
-def rmsez(sdb, lidar):
-    print('Comparing SDB with ground truth...')
-    print(f'Input: {sdb}')
-    with rasterio.open(sdb) as sdb:
-        sdb_img = sdb.read(1)
-        out_meta = sdb.meta
-        
-    with rasterio.open(lidar) as lidar:
-        lidar_img = lidar.read(1)
-        out_meta = lidar.meta        
-        
-    sdb_img = np.where(np.isnan(sdb_img), 0, sdb_img)
-    
-    if sdb_img.size == lidar_img.size:
-        print('\nSDB extents match ground truth')
-        mask1 = (sdb_img != 0)
-        mask2 = (lidar_img != 0)
-        
-        overlap_mask = np.logical_and(mask1, mask2)
-
-        data1 = np.ma.masked_array(sdb_img, mask=~overlap_mask)
-        data2 = np.ma.masked_array(lidar_img, mask=~overlap_mask)
-
-        differences = data1 - data2
-        differences_flat = differences.flatten()
-        mean_diff = np.mean(differences_flat)
-        std_dev_diff = np.std(differences_flat)
-        rmse = np.sqrt(np.mean(np.square(differences_flat)))
-        rmse95 = rmse * 1.96
-        
-        outliers_removed = differences_flat[abs(differences_flat - mean_diff) <= rmse95]
-        
-        # Plot histogram
-        plt.hist(differences_flat, bins=200, color='royalblue', alpha=0.7, label='Differences')
-        plt.xlim(mean_diff - 5 * std_dev_diff, mean_diff + 5 * std_dev_diff)
-        
-        # Add vertical lines for mean and standard deviation
-        plt.axvline(mean_diff, color='navy', linestyle='dashed', linewidth=1, label=f'Mean: {mean_diff:.2f}')
-        plt.axvline(mean_diff + std_dev_diff, color='slategrey', linestyle='dashed', linewidth=1, label=f'Std. Dev.: {std_dev_diff:.2f}')
-        plt.axvline(mean_diff - std_dev_diff, color='slategrey', linestyle='dashed', linewidth=1)
-        
-        # Set labels and legend
-        plt.xlabel('Difference (meters)')
-        plt.ylabel('Frequency')
-        plt.legend()
-        
-        # Show the plot
-        plt.show()
-        
-        plt.imshow(differences, vmax=10)
-        plt.title('Difference (meters)')
-        plt.colorbar()
-        plt.show()
-        
-        # Calculate mean and standard deviation
-        mean_diff = np.mean(outliers_removed)
-        std_dev_diff = np.std(outliers_removed)
-    
-        return mean_diff, std_dev_diff, rmse, rmse95
-    else: 
-        raise Exception('Input lidar and SDB do not match')
 
 
 # %% - main
 
 if __name__ == '__main__':
     
-    # rgb_dir = [r'P:\_RSD\Data\ETOPO\Imagery\_without_truthiness']
-    rgb_dir = [r'P:\_RSD\Data\ETOPO\Imagery\_saipan']
+    rgb_dir = r"P:\_RSD\Data\ETOPO\Imagery\_saipan\Saipan"
+    # rgb_dir = r'P:\_RSD\Data\ETOPO\Imagery\_without_truthiness\KeyLargo'
     shp_dir = [r'P:\_RSD\Data\ETOPO\SHP']
     etopo = r"P:\_RSD\Data\ETOPO\ETOPO\All_ETOPO2022_15s_IceSurf_EXT_01_m100_LZW.tif"
     truthiness_dir = r'P:\_RSD\Data\ETOPO\Truthiness'
@@ -497,10 +504,11 @@ if __name__ == '__main__':
     truthiness = True
     compute_sdb = True
     # compute_sdb = False
-    # constrained_lsq = False
-    constrained_lsq = True
-    save_sdb = True
-    # save_sdb = False
+    
+    constrained_lsq = False
+    # constrained_lsq = True
+    # save_sdb = True
+    save_sdb = False
     sdb_out_dir = r'P:\_RSD\Data\ETOPO\SDB'
     # compare = True
     compare = False
@@ -518,19 +526,19 @@ if __name__ == '__main__':
                    ]
     
     if compute_sdb:
-        img_dirs, maskSHP_dir = list_inputs(rgb_dir, shp_dir, truthiness_dir)
+        maskSHP_dir = list_inputs(rgb_dir, shp_dir, truthiness_dir)
         
-        for rgb in img_dirs:
+        # for rgb in img_dirs:
             # rgb_composite(rgbnir_dir)
-            for maskSHP in maskSHP_dir:
-                if check_bounds(rgb, maskSHP):
-                    location = os.path.basename(rgb)
-                    etopo_name = os.path.dirname(etopo) + '\\' + location + '_ETOPO2022_15s_10m_bilinear.tif'
-                    print(etopo_name)
-                    
-                    sdb_output_names = regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_options, save_sdb, sdb_out_dir)
+        for maskSHP in maskSHP_dir:
+            if check_bounds(rgb_dir, maskSHP):
+                location = os.path.basename(rgb_dir)
+                etopo_name = os.path.dirname(etopo) + '\\' + location + '_pSDBg_bilinear.tif'
+                print(etopo_name)
                 
-        print(sdb_output_names)
+                sdb_output_names = regression(rgb_dir, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_options, save_sdb, sdb_out_dir)
+                
+                print(sdb_output_names)
         
     if compare:
         # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\CapeCod\usace2018_east_cst_dem_Job922111\usace2018_east_cst_dem_J922111.tif"
@@ -547,70 +555,26 @@ if __name__ == '__main__':
         # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\StCroix\StCroix_lidar.tif"
         
         # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_LinearRegression_SDB.tif"
-        # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_RANSACRegressor_SDB.tif"
-        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\2019_NGS_FL_topobathy_DEM_Irma_Job778026\Job778026_2019_NGS_FL_topobathy_DEM_Irma.tif"
-        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\Large\Job780732_2019_NGS_FL_topobathy_DEM_Irma.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar_resample_warp.tif"
         
         # sdb = r"P:\_RSD\Data\ETOPO\SDB\Ponce_SDB_Output\Ponce_RANSACRegressor_SDB.tif"
         # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\2019_ngs_topobathy_dem_pr_Job922086\2019_ngs_topobathy_dem_pr_J922086.tif"
         # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Ponce\Ponce_lidar.tif"
         
-        sdb = r'P:\_RSD\Data\ETOPO\SDB\Saipan_SDB_Output\Saipan_RANSACRegressor_SDB.tif'
+        # sdb = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_LinearRegression_SDB.tif"
+        # inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\Large\Job780732_2019_NGS_FL_topobathy_DEM_Irma.tif"
+        # out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar_resample_warp.tif"
+        
+        sdb = r'P:\\_RSD\\Data\\ETOPO\\SDB\\Saipan_SDB_Output\\Saipan_LinearRegression_SDB.tif'
         inlidar = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\cnmi2019_islands_dem_J922112.tif"
-        out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\Saipan_lidar.tif"
+        out_gt = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\Saipan_lidar_resample_warp.tif"
         
         if not os.path.isfile(out_gt):                
             outlidar = resample.resample(inlidar, sdb, out_gt)
         else:
             outlidar = out_gt
         
-        mean_diff, std_dev_diff, rmse, rmse95 = rmsez(sdb, outlidar)
+        mean_diff, std_dev_diff, rmse, rmse95 = resample.rmsez(sdb, outlidar)
         print(f'\nSDB vs Ground Truth Mean ± Std:\n{mean_diff:.3f} // {std_dev_diff:.3f}')
         print(f'\nSDB vs Ground Truth RMSEz // 95% Confidence:\n{rmse:.3f}m // {rmse95:.3f}m')
-    
-    
-# %% - constrained least squares
-
-# import numpy as np
-# from scipy.optimize import lsq_linear
-# import matplotlib.pyplot as plt
-
-# # Generate some sample data
-# x = np.array([1, 2, 3, 4, 5])
-# y = np.array([0.9, 1.2, 1.8, 2.2, 2.5])
-
-# # Define the linear equation y = mx + b
-# def linear_eq(params, x):
-#     m, b = params
-#     return m * x + b
-
-# # Define the constraint functions
-# def lower_bound_constraint(params):
-#     return params[0] - 0.8
-
-# def upper_bound_constraint(params):
-#     return 1.2 - params[0]
-
-# # Combine the constraint functions into a single array
-# constraints = [lower_bound_constraint, upper_bound_constraint]
-
-# # Initial guess for parameters (slope and intercept)
-# initial_guess = [1, 0]  # <-- Initial guess of [1, 0]
-
-# # Perform least squares linear regression with constraints
-# result = lsq_linear(A=np.vstack([x, np.ones_like(x)]).T, b=y, bounds=([0.8, -np.inf], [1.2, np.inf]), method='trf', verbose=2)
-
-# # Extract the optimized parameters
-# m, b = result.x
-
-# # Print the results
-# print(f"Slope (m): {m}")
-# print(f"Intercept (b): {b}")
-
-# # Plot the data and least squares fit
-# plt.scatter(x, y, label='Data')
-# plt.plot(x, linear_eq(result.x, x), color='red', label='Least Squares Fit')
-# plt.xlabel('x')
-# plt.ylabel('y')
-# plt.legend()
-# plt.show()

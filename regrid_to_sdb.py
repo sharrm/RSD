@@ -62,7 +62,7 @@ def create_latlon_grid(array, transform_out):
     width = array.shape[-1]
     height = array.shape[-2]
     cols,rows = da.meshgrid(da.arange(width),da.arange(height))
-    xs, ys = rasterio.transform.xy(transform, rows.compute(), cols.compute())
+    xs, ys = rasterio.transform.xy(transform_out, rows.compute(), cols.compute()) # changed transform to transform_out
     lons=np.array(xs)
     lats=np.array(ys)
     return lats,lons
@@ -112,15 +112,16 @@ def main(src_fp, dest_fp, out_fp):
     with open(out_fp, 'wb') as f:
         np.save(f, regridded_array)
         
+    
+        
     return out_fp
 
 # %% - input
 
 
 if __name__ == '__main__':
-    src_fp = r"P:\_RSD\Data\ETOPO\ETOPO_Masked_Hatteras_eastCoast.tif"
-    # dest_fp = r"C:\_Turbidity\Imagery\_turbidTestingETOPO\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_492.tif"
-    dest_fp = r"C:\_Turbidity\Imagery\_turbidTestingETOPO\Hatteras_20230127\_Features_11Bands\masked_833.tif"
-    out_fp = r"P:\_RSD\Data\ETOPO\ETOPO_2022_v1_30s_N90W180_bed_OUT.tif"
+    match_tif = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_RANSACRegressor_SDB.tif"
+    tif = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\2019_NGS_FL_topobathy_DEM_Irma_Job778026\Job778026_2019_NGS_FL_topobathy_DEM_Irma.tif"
+    out_tif = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar.npy"
     
-    main(src_fp, dest_fp, out_fp)
+    main(tif, match_tif, out_tif)

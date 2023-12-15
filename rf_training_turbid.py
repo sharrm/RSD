@@ -20,7 +20,7 @@ import pickle
 import rasterio
 # from pytictoc import TicToc
 from scipy.ndimage import median_filter #, gaussian_filter
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier 
+from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, GradientBoostingClassifier, AdaBoostClassifier
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import classification_report, jaccard_score, roc_curve, f1_score, recall_score, precision_score 
 from sklearn.model_selection import cross_val_score, learning_curve, StratifiedKFold
@@ -53,6 +53,7 @@ lower_limit = np.finfo(np.float32).min/10
 # plots correlation matrix for feature inputs
 def correlation_matrix(correlation, df):
     # print(correlation)
+    
     plt.matshow(correlation, cmap='cividis') # viridis cividis
     plt.xticks(range(df.select_dtypes(['number']).shape[1]), df.select_dtypes(['number']).columns, fontsize=10, rotation=-60)
     plt.yticks(range(df.select_dtypes(['number']).shape[1]), df.select_dtypes(['number']).columns, fontsize=10, rotation=30)
@@ -226,16 +227,19 @@ def check_metadata(x_bounds, y_bounds, x_metadata, y_metadata):
 
 # training label statistics
 def label_stats(y_):
-    true_positives = np.count_nonzero(y_ == 2)
-    true_negatives = np.count_nonzero(y_ == 1)
     no_data_value = np.count_nonzero(y_ == 0)
-    turbid = np.count_nonzero(y_ == 3)
+    true_negatives = np.count_nonzero(y_ == 1)
+    true_positives = np.count_nonzero(y_ == 2)
+    vessels = np.count_nonzero(y_ == 3)
+    turbid = np.count_nonzero(y_ == 4)
 
     print('\nTraining label breakdown:')
-    print(f'--Percent True: {true_positives / y_.size:1f} ({true_positives:,} True Values)')
-    print(f'--Percent False: {true_negatives / y_.size:1f} ({true_negatives:,} False Values)')
-    print(f'--Percent Turbid: {turbid / y_.size:1f} ({turbid:,} Turbid Values)')
     print(f'--Percent No Data: {no_data_value / y_.size:1f} ({no_data_value:,} No Data Values)')
+    print(f'--Percent False: {true_negatives / y_.size:1f} ({true_negatives:,} False Values)')
+    print(f'--Percent True: {true_positives / y_.size:1f} ({true_positives:,} True Values)')
+    print(f'--Percent Vessels: {vessels / y_.size:1f} ({vessels:,} Vessel Values)')
+    print(f'--Percent Turbid: {turbid / y_.size:1f} ({turbid:,} Turbid Values)')
+    
     
     log_output(f'--Percent True: {true_positives / y_.size:1f} ({true_positives:,} True Values)')
     log_output(f'--Percent False: {true_negatives / y_.size:1f} ({true_negatives:,} False Values)')
@@ -246,9 +250,9 @@ def label_stats(y_):
 def assess_accuracy(model, X_train, Y_train, X_test, Y_test, RF, feature_list):
     print('\nAssessing accuracy...') 
     
-    print('--Computing Precision, Recall, F1-Score...')
-    classification = classification_report(Y_test, model.predict(X_test), labels=model.classes_)
-    print(f'--Classification Report:\n{classification}')
+    # print('--Computing Precision, Recall, F1-Score...')
+    # classification = classification_report(Y_test, model.predict(X_test), labels=model.classes_)
+    # print(f'--Classification Report:\n{classification}')
     
     # print('\nCreating confusion matrix...')
     cm = confusion_matrix(Y_test, model.predict(X_test), labels=model.classes_)
@@ -257,7 +261,6 @@ def assess_accuracy(model, X_train, Y_train, X_test, Y_test, RF, feature_list):
     plt.title('Confusion Matrix')
     plt.show()
     
-    print('\nComputing accuracy...')
     acc1 = accuracy_score(Y_test, model.predict(X_test)) * 100.0
     print (f'--Validation Accuracy: {acc1:.2f} %') 
     prc = precision_score(Y_test, model.predict(X_test), average='macro')
@@ -288,6 +291,8 @@ def assess_accuracy(model, X_train, Y_train, X_test, Y_test, RF, feature_list):
         
         df = pd.DataFrame(X_train, columns=feature_list)
         correlation = df.corr()
+        # print(df.corr()['Chl_a'])
+        # print(df.corrwith(df['Chl_a']))
         correlation_matrix(correlation, df)
     return None
 
@@ -322,17 +327,22 @@ def train_model(model_options, test_size, x_train, y_train, num_inputs, data_sta
             log_output(f'--Trained {clf} in {(time.time() - start_time):.1f} seconds / {(time.time() - start_time)/60:.1f} minutes\n')
         
             if model_accuracy:
-                if 'RandomForestClassifier' in str(clf):
+                if 'RandomForestClassifier' in str(clf) and 'Ada' not in str(clf):
                     assess_accuracy(clf, X_train, Y_train, X_test, Y_test, True, feature_list)
                 else:
                     assess_accuracy(clf, X_train, Y_train, X_test, Y_test, False, feature_list)
         
-            if write_model and 'RandomForestClassifier' in str(clf): # {X_train.shape[1]}B_{num_inputs}In
+            if write_model and 'RandomForestClassifier' in str(clf) and 'Ada' not in str(clf): # {X_train.shape[1]}B_{num_inputs}In
                 model_name = model_dir + f'\RF_{X_train.shape[1]}B_{model.n_estimators}trees_{model.min_samples_leaf}leaf_{model.min_samples_split}split_{model.max_depth}depth_' + current_time.strftime('%Y%m%d_%H%M') + '.pkl'
                 pickle.dump(model, open(model_name, 'wb')) # save the trained Random Forest model
                 # print(f'\nSaved model: {model_name}\n')
                 model_names.append(model_name)
-            elif write_model and 'Hist' in str(clf):
+            elif write_model and 'Ada' in str(clf): # {X_train.shape[1]}B_{num_inputs}In
+                model_name = model_dir + f'\Ada_{X_train.shape[1]}B__' + current_time.strftime('%Y%m%d_%H%M') + '.pkl'
+                pickle.dump(model, open(model_name, 'wb')) # save the trained Random Forest model
+                # print(f'\nSaved model: {model_name}\n')
+                model_names.append(model_name)
+            elif write_model and 'HistGradient' in str(clf):
                 model_name = model_dir + f'\Hist_{X_train.shape[1]}B_{num_inputs}In_LR{model.learning_rate}_L2{model.l2_regularization}_' + current_time.strftime('%Y%m%d_%H%M') + '.pkl'
                 pickle.dump(model, open(model_name, 'wb'))
                 # print(f'\nSaved model: {model_name}\n')
@@ -347,6 +357,11 @@ def train_model(model_options, test_size, x_train, y_train, num_inputs, data_sta
                 pickle.dump(model, open(model_name, 'wb'))
                 # print(f'\nSaved model: {model_name}\n')
                 model_names.append(model_name)
+            elif write_model and 'GradientBoosting' in str(clf):
+                model_name = model_dir + f'\GBC_{X_train.shape[1]}B_{num_inputs}In_NumEst{model.n_estimators}_Depth{model.max_depth}_' + current_time.strftime('%Y%m%d_%H%M') + '.pkl'
+                pickle.dump(model, open(model_name, 'wb'))
+                # print(f'\nSaved model: {model_name}\n')
+                model_names.append(model_name)                
         return model_names
     else:
         print('Issue with data sizes')
@@ -418,39 +433,48 @@ def compute_learning_curve(model_options, x_train, y_train, n_splits, stratified
 
 def main(): 
     feature_list = [
+# 'Blue',
+# 'Green',
+# 'Red',
+# 'NIR',
+# 'OSI',
+# 'pSDBg',
+# 'pSDBgStandardDeviationSlope',
+# 'pSDBgRoughness',
+# 'Chl_a',
+# 'TSM',
+# 'Secchi',
+        
+'RedEdge704',
 'Blue',
 'Green',
 'Red',
 'NIR',
-'red_740_green',
-'Hue',
-'Saturation',
-'Intensity',
 'OSI',
-'pSDBg',
-'pSDBr',
 'pSDBgStandardDeviationSlope',
 'pSDBgRoughness',
-        
+'Chl_a',
+'TSM',
+
+
+
+
     ]
 
     # inputs 
     training_composites = [
                             # turbid training
-'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Barnegat\\_Features_13Bands\\_Composite\\Barnegat_20221228Ex3C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Chesapeake_20230316\\_Features_13Bands\\_Composite\\Chesapeake_20230316Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Hatteras_20230102\\_Features_13Bands\\_Composite\\Hatteras_20230102Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Keys_20230115\\_Features_13Bands\\_Composite\\FL_Keys_20230115Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Lookout_20230306\\_Features_13Bands\\_Composite\\Lookout_20230306Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Maine\\_Features_13Bands\\_Composite\\Maine_20221006Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\Ponce\\_Features_13Bands\\_Composite\\Ponce_20221203Ex4C_13Bands_composite_20231004_1554.tif', 'C:\\_Turbidity\\Imagery\\_turbidTraining_rhos\\St.Croix\\_Features_13Bands\\_Composite\\StCroix_20220129Ex3C_13Bands_composite_20231004_1554.tif'
+'P:\\Thesis\\Training\\_Turbid_Training\\Hatteras_20230102\\_Features_10Bands\\_Composite\\Hatteras_20230102Ex5C_10Bands_composite_20231214_1521.tif', 'P:\\Thesis\\Training\\_Turbid_Training\\Lookout_20230306\\_Features_10Bands\\_Composite\\Lookout_20230306_5C_10Bands_composite_20231214_1521.tif'
+
+
 
 ]
     
     training_labels = [
-                        # turbid training
-                        r'P:\_RSD\Data\Masks\_turbidTrainingMasks\Chesapeake_20230316Ex4C_TF.tif',
-                        r'P:\_RSD\Data\Masks\_turbidTrainingMasks\Hatteras_20230102Ex4C_TF.tif',
-                        r'P:\_RSD\Data\Masks\_turbidTrainingMasks\Lookout_20230306Ex4C_TF.tif',
-                        r"C:\_Turbidity\Masks\_turbidTrainingMasks\Barnegat_20221228Ex3C_TF.tif",
-                        r"C:\_Turbidity\Masks\_turbidTrainingMasks\FL_Keys_20230115Ex4C_TF.tif",
-                        r"C:\_Turbidity\Masks\_turbidTrainingMasks\Ponce_20221203Ex4C_TF.tif",
-                        r'C:\_Turbidity\Masks\_turbidTrainingMasks\Maine_20221006Ex4C_TF.tif',
-                        r"C:\_Turbidity\Masks\_turbidTrainingMasks\StCroix_20220129Ex3C_TF.tif"
+                        # turbid training                       
+                        r'P:\Thesis\Test Data\_Manuscript_Test\Masks\Lookout_20230306_5C_TF.tif',
+                        r'P:\Thesis\Test Data\_Manuscript_Test\Masks\Hatteras_20230102Ex5C_TF.tif'
+                        
                       ]
     
     training_list = pair_composite_with_labels(training_composites, training_labels)
@@ -458,26 +482,75 @@ def main():
     # models
     model_options = [
                     # RandomForestClassifier(n_estimators=50, min_samples_leaf=10,  min_samples_split=2,  max_depth=None,random_state=random_state,n_jobs=n_jobs,oob_score=True),
-                    # RandomForestClassifier(n_estimators=50, random_state=random_state,n_jobs=n_jobs,oob_score=True),
-
-                    RandomForestClassifier(n_estimators=100, min_samples_leaf=10,  min_samples_split=2,  max_depth=None, random_state=random_state,n_jobs=n_jobs,oob_score=True),
-
-                    # HistGradientBoostingClassifier(random_state=random_state),
-                    # HistGradientBoostingClassifier(learning_rate=0.2, l2_regularization=0.2, random_state=random_state, max_iter=500),
-                    # MLPClassifier(hidden_layer_sizes=50, random_state=random_state),
-                    # MLPClassifier(hidden_layer_sizes=100, random_state=random_state),
-                    # MLPClassifier(hidden_layer_sizes=200, random_state=random_state),
                     
-                    # XGBClassifier(base_score=0.5, colsample_bylevel=1, colsample_bytree=1,
-                    #                gamma=0, learning_rate=0.1, max_delta_step=0, max_depth=10,
-                    #                min_child_weight=1, missing=None, n_estimators=100, nthread=n_jobs,
-                    #                objective='binary:logistic', reg_alpha=0, reg_lambda=1,
-                    #                scale_pos_weight=1, silent=True, subsample=1, seed=random_state),
-                    # XGBClassifier(base_score=0.5, colsample_bylevel=1, colsample_bytree=1,
-                    #                 gamma=0, learning_rate=0.1, max_delta_step=0, max_depth=None,
-                    #                 min_child_weight=1, missing=None, n_estimators=100, nthread=n_jobs,
-                    #                 objective='binary:logistic', reg_alpha=0, reg_lambda=1,
-                    #                 subsample=1, seed=random_state)
+                    RandomForestClassifier(n_estimators=100, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=20, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=80, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_
+                    #                        leaf=160, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=200, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=400, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+
+
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=40, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # MLPClassifier(hidden_layer_sizes=(5,5,5,6,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(7,7,7,6,6,6,6), random_state=random_state),
+                    # RandomForestClassifier(n_estimators=20, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+
+
+                    
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=5, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=10, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=20, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=40, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=60, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=80, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=100, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=160, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=320, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=640, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=10, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=200, min_samples_leaf=20, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=200, min_samples_leaf=40, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=60, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=200, min_samples_leaf=80, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=100, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=200, min_samples_leaf=160, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=100, min_samples_leaf=320, random_state=random_state,n_jobs=n_jobs,oob_score=True),
+
+                    # RandomForestClassifier(n_estimators=1000,  random_state=random_state,n_jobs=n_jobs,oob_score=True),
+                    # RandomForestClassifier(n_estimators=2000,  random_state=random_state,n_jobs=n_jobs,oob_score=True),
+
+                    # HistGradientBoostingClassifier(random_state=random_state,max_depth=3),
+                    # HistGradientBoostingClassifier(learning_rate=0.2, l2_regularization=0.2, random_state=random_state, max_iter=500),
+                    
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=3,n_estimators=100),
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=3,n_estimators=200),
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=6,n_estimators=100),
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=6,n_estimators=200),
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=None,n_estimators=100),
+                    # GradientBoostingClassifier(random_state=random_state,max_depth=None,n_estimators=200),
+                    
+                    # MLPClassifier(hidden_layer_sizes=(4,5,5,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(4,4,5,5,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(4,4,5,5,5,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(4,4,5,5,5,6,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(5,5,5,6,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(5,5,5,5,6,6,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(5,5,5,6,6,6,6,6), random_state=random_state),
+                    # MLPClassifier(hidden_layer_sizes=(5,5,5,5,5,6,6,6,6,6), random_state=random_state),
+                    
+                    # AdaBoostClassifier(base_estimator=RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=n_jobs),random_state=random_state),
+
+                    # XGBClassifier(
+                    #                 learning_rate=0.1,
+                    #                 n_estimators=100,
+                    #                 max_depth=3,
+                    #                 subsample=0.8,
+                    #                 colsample_bytree=0.8,
+                    #                 objective='binary:logistic'
+                    #                 )
                     ]
 
     
@@ -500,7 +573,7 @@ def main():
         x_train, x_metadata, x_bounds = shape_single_composite(training_list[0][0])
         y_train, y_metadata, y_bounds = shape_single_label(training_list[0][1])
 
-        model_names = train_model(model_options, test_size=0.3, x_train=x_train, y_train=y_train, num_inputs=num_inputs, data_stats=False, exclude_zeros=True,
+        model_names = train_model(model_options, test_size=0.3, x_train=x_train, y_train=y_train, num_inputs=num_inputs, data_stats=True, exclude_zeros=True,
                     model_accuracy=True, feature_list=feature_list, write_model=True, model_dir=model_dir)
         print(f'Models trained: {model_names}')
     return None
@@ -515,7 +588,7 @@ if __name__ == '__main__':
     print(f'\nTotal elapsed time: {runtime:.1f} seconds / {(runtime/60):.1f} minutes')
 
         
-# %% - Sensitivity analysis
+## %% - Sensitivity analysis
 
 # RandomForestClassifier(n_estimators=50, min_samples_leaf=1,   min_samples_split=2,  max_depth=None,random_state=random_state,n_jobs=n_jobs,oob_score=True),
 # RandomForestClassifier(n_estimators=50, min_samples_leaf=10,  min_samples_split=2,  max_depth=None,random_state=random_state,n_jobs=n_jobs,oob_score=True),

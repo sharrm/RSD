@@ -46,14 +46,16 @@ upper_limit = np.finfo(np.float32).max/10
 lower_limit = np.finfo(np.float32).min/10
 
 # labels for output plots
-tf_labels = {0: 'No Data', 1: 'False', 2: 'True', 3: 'Turbid'}
+tf_labels = {0: 'No Data', 1: 'Opt-Deep', 2: 'Opt-Shallow', 3: 'Vessel/Surface', 4: 'Turbid', 5: 'Veg'}
 iou_labels = {0: 'No Data', 2: 'True Negative', 3: 'False Negative', 4: 'True Positive', 5: 'False Positive'}
 
 # colormap for true or false bathymetry plot legends
 tf_cmap = {0:[0/255, 0/255, 0/255, 1],
-           1:[225/255, 175/255, 0/255, 1],
-           2:[75/255, 130/255, 0/255, 1],
-           3:[150/255, 125/255, 105/255, 1]}
+           1:[0/255, 0/255, 150/255, 1],
+           2:[10/255, 240/255, 230/255, 1],
+           3:[255/255, 25/255, 25/255, 1],
+           4:[240/255, 135/255, 10/255, 1],
+           5:[75/255, 130/255, 0/255, 1]}
 
 # colormap for iou similarity plot legends
 iou_cmap = {0:[0/255, 0/255, 0/255, 1],
@@ -69,9 +71,17 @@ iou_cmap = {0:[0/255, 0/255, 0/255, 1],
 def tf_colorMap(data):
     rgba = np.zeros((data.shape[0],data.shape[1],4))
     rgba[data==0, :] = [0/255, 0/255, 0/255, 1] # unclassified 
-    rgba[data==1, :] = [225/255, 175/255, 0/255, 1]
-    rgba[data==2, :] = [75/255, 130/255, 0/255, 1]
-    rgba[data==3, :] = [150/255, 125/255, 105/255, 1]
+    rgba[data==1, :] = [0/255, 0/255, 150/255, 1]
+    rgba[data==2, :] = [10/255, 240/255, 230/255, 1]
+    rgba[data==3, :] = [255/255, 25/255, 25/255, 1]
+    rgba[data==4, :] = [240/255, 135/255, 10/255, 1]
+    rgba[data==5, :] = [75/255, 130/255, 0/255, 1]
+    
+    # rgba[data==1, :] = [225/255, 175/255, 0/255, 1]
+    # rgba[data==2, :] = [75/255, 130/255, 0/255, 1]
+    # rgba[data==3, :] = [255/255, 25/255, 25/255, 1]
+    # rgba[data==4, :] = [150/255, 125/255, 105/255, 1]
+    
     return rgba
 
 # colormap for iou similarity plots
@@ -373,17 +383,34 @@ def pair_composite_with_labels(test_rasters, test_labels):
 def main():
     # inputs
     test_models = [           
-                    # turbid tests: 
-                        # 10 areas -- worked pretty well -- continue testing
-'C:\\_Turbidity\\Models\\RF_13B_100trees_10leaf_2split_Nonedepth_20231004_1558.pkl'
+'C:\\_Turbidity\\Models\\RF_10B_100trees_1leaf_2split_Nonedepth_20231215_0946.pkl'        
 
                         ]
     
     test_composites = [
-                        # turbid tests: chesapeake bay, hatteras inlet, cape lookout
-                        # 492, 560, 665, 704, 740-green, 833, psdbg, psdbr, osi, psdbg roughness
-# 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230127\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20230928_1334.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230206\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20230928_1334.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230507\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20230928_1334.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Lookout_20230507\\_Features_10Bands\\_Composite\\CapeLookout_10Bands_composite_20230928_1334.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Lookout_20230726\\_Features_10Bands\\_Composite\\CapeLookout_10Bands_composite_20230928_1334.tif'
-'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230127\\_Features_13Bands\\_Composite\\Hatteras_Inlet_13Bands_composite_20231005_0749.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230206\\_Features_13Bands\\_Composite\\Hatteras_Inlet_13Bands_composite_20231005_0749.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Hatteras_20230507\\_Features_13Bands\\_Composite\\Hatteras_Inlet_13Bands_composite_20231005_0749.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Lookout_20230507\\_Features_13Bands\\_Composite\\CapeLookout_13Bands_composite_20231005_0749.tif', 'C:\\_Turbidity\\Imagery\\_turbidTesting_rhos\\Lookout_20230726\\_Features_13Bands\\_Composite\\CapeLookout_13Bands_composite_20231005_0749.tif'
+        # g r nir
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_3Bands\\_Composite\\FL_Keys_20230115Ex4C_3Bands_composite_20231213_1450.tif', 
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_3Bands\\_Composite\\Hatteras_Inlet_3Bands_composite_20231213_1450.tif', 
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_3Bands\\_Composite\\CapeLookout_3Bands_composite_20231213_1450.tif'        
+
+# osi, tsm
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_2Bands\\_Composite\\FL_Keys_20230115Ex4C_2Bands_composite_20231214_1245.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_2Bands\\_Composite\\Hatteras_Inlet_2Bands_composite_20231214_1245.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_2Bands\\_Composite\\CapeLookout_2Bands_composite_20231214_1245.tif'
+# osi, tsm, ndti, 704
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_4Bands\\_Composite\\FL_Keys_20230115Ex4C_4Bands_composite_20231214_1258.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_4Bands\\_Composite\\Hatteras_Inlet_4Bands_composite_20231214_1258.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_4Bands\\_Composite\\CapeLookout_4Bands_composite_20231214_1258.tif'
+# osi, tsm, ndti
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_3Bands\\_Composite\\FL_Keys_20230115Ex4C_3Bands_composite_20231214_1325.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_3Bands\\_Composite\\Hatteras_Inlet_3Bands_composite_20231214_1325.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_3Bands\\_Composite\\CapeLookout_3Bands_composite_20231214_1325.tif'
+# osi, tsm, chl_a, cymk
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_7Bands\\_Composite\\FL_Keys_20230115Ex4C_7Bands_composite_20231214_1407.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_7Bands\\_Composite\\Hatteras_Inlet_7Bands_composite_20231214_1407.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_7Bands\\_Composite\\CapeLookout_7Bands_composite_20231214_1407.tif'
+# osi, tsm, chl_a, ck
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_5Bands\\_Composite\\FL_Keys_20230115Ex4C_5Bands_composite_20231214_1429.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_5Bands\\_Composite\\Hatteras_Inlet_5Bands_composite_20231214_1429.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_5Bands\\_Composite\\CapeLookout_5Bands_composite_20231214_1429.tif'
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Chesapeake_20230316\\_Features_5Bands\\_Composite\\ChesapeakeBay_vCompositeTest_5Bands_composite_20231214_1436.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\PuertoReal_20211203\\_Features_5Bands\\_Composite\\Puerto_Real_Smaller_5Bands_composite_20231214_1436.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\StCroix_20220129\\_Features_5Bands\\_Composite\\StCroix_20220129Ex3C_5Bands_composite_20231214_1436.tif'
+# osi, tsm, chl_a, pSDBg
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_4Bands\\_Composite\\FL_Keys_20230115Ex4C_4Bands_composite_20231214_1451.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_4Bands\\_Composite\\Hatteras_Inlet_4Bands_composite_20231214_1451.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_4Bands\\_Composite\\CapeLookout_4Bands_composite_20231214_1451.tif'
+# osi, tsm, chl_a, pSDBgRoSt
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_5Bands\\_Composite\\FL_Keys_20230115Ex4C_5Bands_composite_20231214_1516.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_5Bands\\_Composite\\Hatteras_Inlet_5Bands_composite_20231214_1516.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_5Bands\\_Composite\\CapeLookout_5Bands_composite_20231214_1516.tif'
+# osi, tsn, chl_a, pSDBgRoSt, RGB NIR 704
+'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20231215_0941.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230306\\_Features_10Bands\\_Composite\\CapeLookout_10Bands_composite_20231215_0941.tif'
+
 
 ]
     
@@ -394,6 +421,8 @@ def main():
                           'write_iou': False,
                           'prob_plot': False,
                           }
+    
+    test_labels = []
     
     # total model testing results
     # prediction_list = pair_composite_with_labels(test_composites, test_labels)

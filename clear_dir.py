@@ -9,12 +9,12 @@ Clear directory of _Feature folders containing masked individual bands, composit
 
 import os, shutil
 
-directory_path = r'C:\_Turbidity\Imagery'
+directory_path = r'P:\Thesis\Test Data\_Turbid_Tests'
 directory = [os.path.join(directory_path, file) for file in os.listdir(directory_path)]
 
 for folder in directory:
-    for location in os.listdir(folder):
-        full = os.path.join(folder, location)
+    # for location in os.listdir(folder):
+        full = os.path.join(directory_path, folder)
         for f in os.listdir(full):
             file_path = os.path.join(full, f)
             if os.path.isdir(file_path):
