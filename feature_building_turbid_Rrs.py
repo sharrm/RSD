@@ -166,6 +166,17 @@ class Features:
             
         return log10_ssd_name
     
+    def _mci(self, red_name, red_704_name, red_740_name):
+        
+        mci_TF, mci_name = sdb.mci(red_name, red_704_name, red_740_name, output_dir=self.feature_dir)
+        
+        if mci_TF:
+            print(f'--MCI output to {mci_name}')
+        else:
+            print('Creating MCI failed...')
+            
+        return mci_name
+    
     ## - predictor composite
     def build_feature_composite(self, num_bands):
         print('\nBuilding compsite image...')
@@ -189,10 +200,10 @@ class Features:
             print('\nCreating composite failed...')
         return out_composite_name
     
-    def feature_options(self, blue, green, red, red_edge_704, red_edge_740, nir_783, 
+    def feature_options(self, blue, green, red, red_704, red_740, nir_783, 
                         nir, band_comparisons, cmyk, hsv, odi_1, odi_2, ndwi, ndti, 
                         pSDBg, pSDBr, chl_oc3, dogliotti, nechad, pSDBg_roughness, pSDBr_roughness, window_size,
-                        etopo, viirs, chl_a, tsm, secchi): # options to pass in
+                        etopo, viirs, chl_a, tsm, secchi, mci): # options to pass in
         # list of bands
         rasters = os.listdir(self.rgbnir_dir)
 
@@ -219,13 +230,13 @@ class Features:
                                                          'masked_' + os.path.basename(band)[-7:-4] + '.tif')
                     surface_reflectance['red band'] = os.path.join(self.rgbnir_dir, band)
                 elif '704' in band and 'Nechad' not in band: # near infrared wavelength (704nm)
-                    surface_reflectance['red edge 704 name'] = os.path.join(self.feature_dir, 
+                    surface_reflectance['red 704 name'] = os.path.join(self.feature_dir, 
                                                          'masked_' + os.path.basename(band)[-7:-4] + '.tif')
-                    surface_reflectance['red edge 704 band'] = os.path.join(self.rgbnir_dir, band)
+                    surface_reflectance['red 704 band'] = os.path.join(self.rgbnir_dir, band)
                 elif '740' in band and 'Nechad' not in band or '739' in band and 'Nechad' not in band: # near infrared wavelength (740nm)
-                    surface_reflectance['red edge 740 name'] = os.path.join(self.feature_dir, 
+                    surface_reflectance['red 740 name'] = os.path.join(self.feature_dir, 
                                                          'masked_' + os.path.basename(band)[-7:-4] + '.tif')
-                    surface_reflectance['red edge 740 band'] = os.path.join(self.rgbnir_dir, band)
+                    surface_reflectance['red 740 band'] = os.path.join(self.rgbnir_dir, band)
                 elif '783' in band or '780' in band or 'B7' in band: # near infrared wavelength (783nm)
                     surface_reflectance['nir 783 name'] = os.path.join(self.feature_dir, 
                                                          'masked_' + os.path.basename(band)[-7:-4] + '.tif')
@@ -278,15 +289,14 @@ class Features:
         blue_aoi = Features.mask_to_aoi(self, surface_reflectance['blue band'], surface_reflectance['blue name'])
         green_aoi = Features.mask_to_aoi(self, surface_reflectance['green band'], surface_reflectance['green name'])
         red_aoi = Features.mask_to_aoi(self, surface_reflectance['red band'], surface_reflectance['red name'])
-        red_edge_704_aoi = Features.mask_to_aoi(self, surface_reflectance['red edge 704 band'], surface_reflectance['red edge 704 name'])
-
-        
-        if red_edge_704:
-            self.composite_features_list.append(red_edge_704_aoi)
-            features_list.append("'RedEdge704',")
-        # if red_edge_740:
-        # red_edge_740_aoi = Features.mask_to_aoi(self, surface_reflectance['red edge 740 band'], surface_reflectance['red edge 740 name'])
+        red_704_aoi = Features.mask_to_aoi(self, surface_reflectance['red 704 band'], surface_reflectance['red 704 name'])
+        if mci:
+            red_740_aoi = Features.mask_to_aoi(self, surface_reflectance['red 740 band'], surface_reflectance['red 740 name'])
         nir_aoi = Features.mask_to_aoi(self, surface_reflectance['nir band'], surface_reflectance['nir name'])
+
+        if red_704:
+            self.composite_features_list.append(red_704_aoi)
+            features_list.append("'Red704',")
         
         # if pSDBg:
         pSDBg_aoi = Features.pSDB(self, blue_aoi, green_aoi, rol_name='pSDBg.tif')
@@ -298,13 +308,13 @@ class Features:
             features_list.append("'Green',")
         if red:
             self.composite_features_list.append(red_aoi)
-            features_list.append("'Red',")
-        # if red_edge_704:
-        #     self.composite_features_list.append(red_edge_704_aoi)
-        #     features_list.append("'RedEdge704',")
-        # if red_edge_740:
-            # self.composite_features_list.append(red_edge_740_aoi)
-            # features_list.append("'RedEdge740',")
+            features_list.append("'Red665',")
+        if red_704:
+            self.composite_features_list.append(red_704_aoi)
+            features_list.append("'Red704',")
+        if red_740:
+            self.composite_features_list.append(red_740_aoi)
+            features_list.append("'Red740',")
         if nir_783:
             nir_783_aoi = Features.mask_to_aoi(self, surface_reflectance['nir 783 band'], surface_reflectance['nir 783 name'])            
             self.composite_features_list.append(nir_783_aoi)
@@ -431,7 +441,11 @@ class Features:
         if secchi:
             ssd_aoi = Features._ssd(self, blue_aoi, green_aoi, red_aoi)
             self.composite_features_list.append(ssd_aoi)
-            features_list.append("'Secchi',")            
+            features_list.append("'Secchi',") 
+        if mci:
+            mci_aoi = Features._mci(self, red_aoi, red_704_aoi, red_740_aoi)
+            self.composite_features_list.append(mci_aoi)
+            features_list.append("'MCI',")
         
         num_bands = len(features_list)
         
@@ -483,8 +497,9 @@ def rgb_composite(rgb_dir):
 # %% - main
 def main():    
     # input imagery
-    # train_test = [r'P:\Thesis\Training\_Turbid_Training'] 
-    train_test = [r'P:\Thesis\Test Data\_Turbid_Tests']
+    # train_test = [r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Turbid_Training'] 
+    # train_test = [r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Turbid_Tests']
+    train_test = [r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan']
 
         
     img_dirs = []
@@ -492,31 +507,30 @@ def main():
         [img_dirs.append(os.path.join(loc, folder)) for folder in os.listdir(loc)]
     
     # input aoi    
-    # extent_dir = [r'P:\Thesis\Training\_Turbid_MC']
-    extent_dir = [r"P:\Thesis\Test Data\_Turbid_Extents"]
-    # extent_dir = [r'P:\Thesis\Training\UNet']
-    # extent_dir = [r'P:\Thesis\Test Data\UNet']
-
+    # extent_dir = [r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Turbid_MC']
+    # extent_dir = [r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Turbid_Extents"]
+    extent_dir = [r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan_SHP']
+    
 
     maskSHP_dir = []
     for loc in extent_dir:
         [maskSHP_dir.append(os.path.join(loc, shp)) for shp in os.listdir(loc) if shp.endswith('.shp')]
 
     ft_options = {
-                  'blue': True, 
-                  'green': True,  
-                  'red': True, 
-                  'red_edge_704': True,
-                  'red_edge_740': False,
+                  'blue': False, 
+                  'green': False,  
+                  'red': False, 
+                  'red_704': False,
+                  'red_740': False,
                   'nir_783': False, 
-                  'nir': True,
+                  'nir': False,
                   'band_comparisons': False,
                   'cmyk': False,
                   'hsv': False,
                   'odi_1': True, 
                   'odi_2': False,
-                  'ndwi': False,
-                  'ndti': False,
+                  'ndwi': True,
+                  'ndti': True,
                   'pSDBg': False,
                   'pSDBr': False,
                   'chl_oc3': False,
@@ -530,6 +544,7 @@ def main():
                   'chl_a': True,
                   'tsm': True,
                   'secchi': False,
+                  'mci': True
                   }
                     # Add in VIIRS
     

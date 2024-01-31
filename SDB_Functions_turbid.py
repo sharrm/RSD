@@ -402,7 +402,8 @@ def log_ssd(blue_name, green_name, red_name, output_dir):
         out_meta = red_src.meta
         
     with rasterio.open(blue_name) as blue_src:
-        blue_image = blue_src.read(1)        
+        blue_image = blue_src.read(1)   
+        
         
     log10_ssd = -1.0867 + 0.6417 * np.log10(blue_image) - 1.4111 * np.log10(green_image) - 0.0289 * np.log10(red_image)
     
@@ -415,7 +416,36 @@ def log_ssd(blue_name, green_name, red_name, output_dir):
     dest = None
     
     return True, ssd_output
+
+def mci(red_name, red_704_name, red_740_name, output_dir):
+        # MCI=𝑅𝑟𝑠704−𝑅𝑟𝑠665+(𝑅𝑟𝑠665−𝑅𝑟𝑠740)∗((𝑅𝑟𝑠704−𝑅𝑟𝑠665)/(𝑅𝑟𝑠740−𝑅𝑟𝑠665))
         
+        with rasterio.open(red_name) as red_src:
+            red_img = red_src.read(1)
+        
+        with rasterio.open(red_704_name) as red_704_src:
+            red704_img = red_704_src.read(1)
+            out_meta = red_704_src.meta
+            
+        with rasterio.open(red_740_name) as red_740_src:
+            red740_img = red_740_src.read(1)
+            out_meta = red_740_src.meta
+        
+        # https://www.mdpi.com/2072-4292/12/3/451#B53-remotesensing-12-00451
+        # https://www.tandfonline.com/doi/full/10.1080/01431161003639660?casa_token=rL4WPtHtiLcAAAAA%3AhZM7_AZnEQqDT5HPWP1d3Kf24pclaVnL2tzBaToKlC2YIar7qBkGMf5STQH2m5r4GMLaWc2VLldk
+        # mci = red704_img - red_img - (red_img - red740_img) * ((red704_img - red_img) / (red740_img - red_img))
+        mci = red704_img - red_img - (709 - 681) * (red740_img - red_img) / (754 - 681)
+        
+        mci_output = os.path.join(output_dir, 'mci.tif')
+
+        # write to file
+        with rasterio.open(mci_output, "w", **out_meta) as dest:
+            dest.write(mci, 1)
+            
+        dest = None
+        
+        return True, mci_output
+
 
 # %% - composite
 

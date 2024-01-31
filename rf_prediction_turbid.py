@@ -247,19 +247,6 @@ def predict_img(unseen_img, im_predicted, X_new, rc, u_metadata, pkl, model,
 
     im_predicted[rc[:,0],rc[:,1]] = prediction
     
-    # insert morphology
-    # pred_dilate = morphology.dilation(im_predicted)
-    # pred_erode = morphology.erosion(im_predicted)
-    # pred_dilate = morphology.dilation(pred_erode)
-    # pred_erode = morphology.erosion(pred_dilate)
-    # pred_erode = morphology.erosion(pred_erode)
-    # pred_dilate = morphology.dilation(pred_erode)
-    # pred_erode = morphology.erosion(pred_dilate)
-    # pred_dilate = morphology.dilation(pred_erode)
-    # pred_erode = morphology.erosion(pred_dilate)
-    # im_predicted = morphology.dilation(pred_erode)
-    # im_predicted = morphology.dilation(pred_dilate)
-    
     print('--Plotting...')
     plot_title = os.path.basename(pkl).split('_202')[0]
     plotImage(tf_colorMap(im_predicted),tf_labels,tf_cmap,plot_title)
@@ -273,6 +260,18 @@ def predict_img(unseen_img, im_predicted, X_new, rc, u_metadata, pkl, model,
         
     if write_prediction:             
         write_raster(im_predicted, u_metadata, prediction_path)
+        
+    merged_classes = np.where(((im_predicted == 0) | (im_predicted == 2)), im_predicted, 1)
+    # insert morphology
+    pred_dilate = morphology.dilation(merged_classes)
+    pred_erode = morphology.erosion(pred_dilate)
+    pred_dilate = morphology.dilation(pred_dilate)
+    pred_erode = morphology.erosion(pred_dilate)
+    merged_classes = pred_erode
+    
+    if write_prediction:    
+        merged_path = prediction_path.replace('prediction_', 'merged_')         
+        write_raster(merged_classes, u_metadata, merged_path)
     
     if prob_plot:
         prediction_probability(prediction_path, model, im_predicted, X_new, rc, u_metadata, write_prediction)
@@ -383,7 +382,8 @@ def pair_composite_with_labels(test_rasters, test_labels):
 def main():
     # inputs
     test_models = [           
-'C:\\_Turbidity\\Models\\RF_10B_100trees_1leaf_2split_Nonedepth_20231215_0946.pkl'        
+'C:\\Users\\Matthew.Sharr\\Documents\\NGS\\SatBathy\\Models\\RF_8B_100trees_1leaf_2split_Nonedepth_20231221_1107.pkl'
+        
 
                         ]
     
@@ -409,7 +409,11 @@ def main():
 # osi, tsm, chl_a, pSDBgRoSt
 # 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Florida_20230115\\_Features_5Bands\\_Composite\\FL_Keys_20230115Ex4C_5Bands_composite_20231214_1516.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_5Bands\\_Composite\\Hatteras_Inlet_5Bands_composite_20231214_1516.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230507\\_Features_5Bands\\_Composite\\CapeLookout_5Bands_composite_20231214_1516.tif'
 # osi, tsn, chl_a, pSDBgRoSt, RGB NIR 704
-'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20231215_0941.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230306\\_Features_10Bands\\_Composite\\CapeLookout_10Bands_composite_20231215_0941.tif'
+# 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Hatteras_20230127\\_Features_10Bands\\_Composite\\Hatteras_Inlet_10Bands_composite_20231215_0941.tif', 'P:\\Thesis\\Test Data\\_Turbid_Tests\\Lookout_20230306\\_Features_10Bands\\_Composite\\CapeLookout_10Bands_composite_20231215_0941.tif'
+
+# Nantucket 
+'C:\\Users\\Matthew.Sharr\\Documents\\NGS\\SatBathy\\Data\\Testing\\_Turbid_Tests\\Hatteras_20230127\\_Features_8Bands\\_Composite\\Hatteras_Inlet_8Bands_composite_20231221_1108.tif'
+
 
 
 ]

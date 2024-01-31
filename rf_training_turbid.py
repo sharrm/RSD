@@ -27,7 +27,7 @@ from sklearn.model_selection import cross_val_score, learning_curve, StratifiedK
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.tree import export_graphviz
-from xgboost import XGBClassifier
+# from xgboost import XGBClassifier
 import sys
 import time
 # from yellowbrick.classifier import ROCAUC
@@ -41,7 +41,7 @@ random_state = 42
 n_jobs = 5 # number of cores to use in sklearn processes
 
 current_time = datetime.datetime.now() # current time for output file names
-log_file = r"P:\Thesis\Training\_Logs\training_" + current_time.strftime('%Y%m%d_%H%M') + '.txt' # log file
+log_file = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Logs\train_" + current_time.strftime('%Y%m%d_%H%M') + '.txt' # log file
 
 #-- When information is unavailable for a cell location, the location will be assigned as NoData. 
 upper_limit = np.finfo(np.float32).max/10
@@ -432,31 +432,15 @@ def compute_learning_curve(model_options, x_train, y_train, n_splits, stratified
 # %% -- main
 
 def main(): 
-    feature_list = [
-# 'Blue',
-# 'Green',
-# 'Red',
-# 'NIR',
-# 'OSI',
-# 'pSDBg',
-# 'pSDBgStandardDeviationSlope',
-# 'pSDBgRoughness',
-# 'Chl_a',
-# 'TSM',
-# 'Secchi',
-        
-'RedEdge704',
-'Blue',
-'Green',
-'Red',
-'NIR',
+    feature_list = [        
 'OSI',
+'NDWI',
+'NDTI',
 'pSDBgStandardDeviationSlope',
 'pSDBgRoughness',
 'Chl_a',
 'TSM',
-
-
+'MCI',
 
 
     ]
@@ -464,16 +448,15 @@ def main():
     # inputs 
     training_composites = [
                             # turbid training
-'P:\\Thesis\\Training\\_Turbid_Training\\Hatteras_20230102\\_Features_10Bands\\_Composite\\Hatteras_20230102Ex5C_10Bands_composite_20231214_1521.tif', 'P:\\Thesis\\Training\\_Turbid_Training\\Lookout_20230306\\_Features_10Bands\\_Composite\\Lookout_20230306_5C_10Bands_composite_20231214_1521.tif'
-
+'C:\\Users\\Matthew.Sharr\\Documents\\NGS\\SatBathy\\Data\\Training\\_Turbid_Training\\Lookout_20230306\\_Features_8Bands\\_Composite\\Lookout_20230306_5C_8Bands_composite_20231221_1107.tif'
 
 
 ]
     
     training_labels = [
                         # turbid training                       
-                        r'P:\Thesis\Test Data\_Manuscript_Test\Masks\Lookout_20230306_5C_TF.tif',
-                        r'P:\Thesis\Test Data\_Manuscript_Test\Masks\Hatteras_20230102Ex5C_TF.tif'
+                        r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Masks\Hatteras_20230102Ex5C_TF.tif',
+                        r'C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Masks\Lookout_20230306_5C_TF.tif'
                         
                       ]
     
@@ -555,7 +538,7 @@ def main():
 
     
     # output
-    model_dir = r"C:\_Turbidity\Models"
+    model_dir = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Models"
 
     # train model(s) -- either one or multiple with various hyperparameters options
     num_inputs = len(training_list)

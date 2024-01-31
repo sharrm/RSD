@@ -18,7 +18,7 @@ import pickle
 import pyproj
 import rasterio
 import rasterio.mask
-import regrid_to_sdb as regrid
+# import regrid_to_sdb as regrid
 from scipy import spatial
 from scipy.ndimage import gaussian_filter, median_filter
 from scipy.optimize import lsq_linear
@@ -440,10 +440,8 @@ def regression(rgb, truthiness_dir, etopo, etopo_name, maskSHP, truthiness, reg_
                   
     pSDBg = np.nan_to_num(np.reshape(pSDBg, (-1, 1)))
     sdb = m1*pSDBg + m0
-    sdb = np.reshape(sdb, dims)#[0,:,:]
+    sdb = np.reshape(sdb, dims)[0,:,:]
     sdb[nans] = np.nan
-    
-    
     
     x_min, y_min, x_max, y_max, extent = extents
        
@@ -507,8 +505,8 @@ if __name__ == '__main__':
     
     constrained_lsq = False
     # constrained_lsq = True
-    # save_sdb = True
-    save_sdb = False
+    save_sdb = True
+    # save_sdb = False
     sdb_out_dir = r'P:\_RSD\Data\ETOPO\SDB'
     # compare = True
     compare = False

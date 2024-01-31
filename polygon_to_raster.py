@@ -24,13 +24,13 @@ poly_to_raster = True
 # polygon = r"P:\Thesis\Masks\Cape\CapeCod_Mask.shp"
 # composite_raster = r'P:\\Thesis\\Test Data\\_Testing\\Mass\\_Features_10Bands\\_Composite\\CapeCod_Mask_10Bands_composite_20231008_1743.tif'
 
-polygon = r"P:\Thesis\Training\UNet\Lookout_UNet_8C.shp"
-composite_raster = 'P:\\Thesis\\Training\\_Turbid_Training\\Lookout_20230306\\_Features_6Bands\\_Composite\\Lookout_UNet_8C_6Bands_composite_20231212_1602.tif'
+polygon = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Turbid_MC\Lookout_20230306_5C.shp"
+composite_raster = 'C:\\Users\\Matthew.Sharr\\Documents\\NGS\\SatBathy\\Data\\Training\\_Turbid_Training\\Lookout_20230306\\_Features_10Bands\\_Composite\\Lookout_20230306_5C_10Bands_composite_20231219_1024.tif'
 
 
 
 # binary_raster = r"P:\Thesis\Samples\Raster" + '\\' + os.path.basename(polygon).split('.')[0] + '_TF.tif'
-binary_raster = r"P:\Thesis\Test Data\_Manuscript_Test\Masks" + '\\' + os.path.basename(polygon).split('.')[0] + '_TF.tif'
+binary_raster = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Training\_Masks" + '\\' + os.path.basename(polygon).split('.')[0] + '_TF.tif'
 
 if poly_to_raster:   
     # Load polygon

@@ -109,6 +109,70 @@ def plot_decision_tree():
     plt.show()
 
 
+# %% - Shoreline Detection
+
+def shoreline(in492, in560, in665, in833, land, out_prediction, write_prediction):
+    with fiona.open(land, "r") as shapefile:
+        shapes = [feature["geometry"] for feature in shapefile]
+
+    with rasterio.open(in492) as blue:
+        blue_img, out_transform = rasterio.mask.mask(blue, shapes, crop=True)
+        out_meta = blue.meta
+
+    with rasterio.open(in560) as green:
+        green_img, out_transform = rasterio.mask.mask(green, shapes, crop=True)
+        out_meta = green.meta
+        
+    with rasterio.open(in665) as red:
+        red_img, out_transform = rasterio.mask.mask(red, shapes, crop=True)
+        out_meta = red.meta
+        
+    with rasterio.open(in833) as nir:
+        nir_img, out_transform = rasterio.mask.mask(nir, shapes, crop=True)
+        out_meta = nir.meta
+        w = nir.width
+        h = nir.height
+        
+    # compute ndwi and pSDBr
+    ndwi = (green_img - nir_img) / (green_img + nir_img)
+    pSDBr = np.log(blue_img * 1000) / np.log(red_img * 1000)
+    pSDBg = np.log(blue_img * 1000) / np.log(green_img * 1000)
+
+    # perform edge detection on ndwi, and mask out areas (targeting land)
+    canny_feat = feature.canny(ndwi[0,:,:], sigma=3)
+    # poi = np.where((canny_feat == 1) & (ndwi[0,:,:] > 0.1), pSDBg, 0 )
+    poi = np.where((canny_feat == 1) & (ndwi[0,:,:] > 0.1), 1, 0 )
+    
+    # print median results
+    print('\nPlotting results...')
+    nearshore_pixels = pSDBr[0,:,:][poi == 1]
+    # median_prediction = np.nanmedian(poi)
+    # median_ndwi = np.median(ndwi[0,:,:][prediction == 1])
+    # print(f'\nMedian (pSDBr): {median_prediction:.3f}')
+    # print(f'Median (ndwi): {median_ndwi:.3f}')
+    # print(f'Count: {nearshore_pixels.size:,}')
+    
+    # plot rgb and results
+    plot_rgb_poi(red_img, green_img, blue_img, poi, ndwi[0,:,:], out_transform, w, h, brightness=3, aspect=1.)
+    
+    # plot histogram
+    plt.hist(pSDBr[0,:,:][poi == 1], bins=50)
+    plt.title('Distribution of pSDBr in Predicted Nearshore Area')
+    plt.xlabel('pSDBr Value')
+    plt.ylabel('Count')
+    plt.show()
+    
+    if write_prediction:
+        with rasterio.open(out_prediction, 'w', **out_meta) as dst:
+            dst.write(poi)   
+            
+        dst = None
+    
+        print(f'Wrote: {out_prediction}')
+        
+    return None
+
+
 # %% - Training
 
 # shapes the feature inputs into a 2d array where each column is a 1d version of the 2d array/raster image
@@ -260,17 +324,15 @@ def prediction(in492, in560, in665, in833, land, model, out_prediction, write_pr
     # print median results
     print('\nPlotting results...')
     nearshore_pixels = pSDBr[0,:,:][prediction == 1]
-    median_prediction = np.median(nearshore_pixels)
-    # median_ndwi = np.median(ndwi[0,:,:][prediction == 1])
+    median_prediction = np.nanmedian(nearshore_pixels)
     print(f'\nMedian (pSDBr): {median_prediction:.3f}')
-    # print(f'Median (ndwi): {median_ndwi:.3f}')
     print(f'Count: {nearshore_pixels.size:,}')
     
     # plot rgb and results
     plot_rgb_poi(red_img, green_img, blue_img, prediction, ndwi[0,:,:], out_transform, w, h, brightness=3, aspect=1.)
     
     # plot histogram
-    plt.hist(pSDBr[0,:,:][prediction == 1], bins=50)
+    plt.hist(nearshore_pixels, bins=100)
     plt.title('Distribution of pSDBr in Predicted Nearshore Area')
     plt.xlabel('pSDBr Value')
     plt.ylabel('Count')
@@ -278,16 +340,33 @@ def prediction(in492, in560, in665, in833, land, model, out_prediction, write_pr
     
     out_image = prediction
     out_meta.update({"driver": "GTiff",
+                     'dtype': 'float32',
+                     "nodata": 0,
                       "height": out_image.shape[0],
                       "width": out_image.shape[1],
                       "transform": out_transform})
-    
+        
     if write_prediction:
-        with rasterio.open(out_prediction, 'w', **out_meta) as dst:
+        out_pSDBr = out_prediction.replace('ZS', 'pSDBr')
+        nearshore_pSDBr = np.where(prediction == 1, pSDBr, 0)
+        
+        with rasterio.open(out_pSDBr, 'w', **out_meta) as dst:
+            dst.write(nearshore_pSDBr)   
+            
+        dst = None
+    
+        print(f'Wrote: {out_pSDBr}')
+        
+        int_meta = out_meta
+        int_meta.update({'dtype':'uint16'})
+        
+        with rasterio.open(out_prediction, 'w', **int_meta) as dst:
             dst.write(out_image, 1)   
             
         dst = None
-        
+    
+        print(f'Wrote: {out_prediction}')
+    
     return None
 
 
@@ -296,99 +375,33 @@ def prediction(in492, in560, in665, in833, land, model, out_prediction, write_pr
 if __name__ == '__main__':
     
     # input training data
-    # in492 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\StCroix_Zero.shp"
+    in492 = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Testing\StCroix\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_492.tif"
+    in560 = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Testing\StCroix\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_560.tif"
+    in665 = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Testing\StCroix\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_665.tif"
+    # in704 = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Testing\StCroix\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_704.tif"
+    in833 = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Testing\StCroix\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_833.tif"
+    land = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Land\StCroix_Zero.shp"
     
     # train
-    # out_model = os.path.join(r'C:\_ZeroShoreline\Model', 'RF_20trees_TrainedStCroix.pkl')
-    # model = model_training(in492, in560, in665, in833, land, save_model=True, out_model=out_model)
+    out_model = os.path.join(r'C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Model', 'RF_20trees_TrainedStCroix.pkl')
+    # in_model = model_training(in492, in560, in665, in833, land, save_model=True, out_model=out_model)
     
-    # test data
-    # in492 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230102\S2A_MSI_2023_01_02_15_53_20_T18SVE_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230102\NDWI\S2A_MSI_2023_01_02_15_53_20_T18SVE_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230102\S2A_MSI_2023_01_02_15_53_20_T18SVE_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230102\S2A_MSI_2023_01_02_15_53_20_T18SVE_L2R_rhos_704.tif"    
-    # in833 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230102\NDWI\S2A_MSI_2023_01_02_15_53_20_T18SVE_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Hatteras_Inlet_FocusedExtent.shp"
-    # land = r"C:\_ZeroShoreline\Extent\Hatteras_Inlet.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_559.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\Hatteras_20230127\S2B_MSI_2023_01_27_15_53_19_T18SVE_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Hatteras_Inlet_FocusedExtent.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\StCroix_20220129\S2A_MSI_2022_01_29_14_58_03_T20QKE_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\StCroix_Zero.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\HalfMoonShoal_20221209\S2A_MSI_2022_12_09_16_16_30_T17RLH_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\HalfMoonShoal_20221209\S2A_MSI_2022_12_09_16_16_30_T17RLH_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\HalfMoonShoal_20221209\S2A_MSI_2022_12_09_16_16_30_T17RLH_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\HalfMoonShoal_20221209\S2A_MSI_2022_12_09_16_16_30_T17RLH_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\HalfMoonShoal_20221209\S2A_MSI_2022_12_09_16_16_30_T17RLH_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Halfmoon_Zero.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20230115\S2A_MSI_2023_01_15_16_06_24_T17RNH_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20230115\S2A_MSI_2023_01_15_16_06_24_T17RNH_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20230115\S2A_MSI_2023_01_15_16_06_24_T17RNH_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20230115\S2A_MSI_2023_01_15_16_06_24_T17RNH_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20230115\S2A_MSI_2023_01_15_16_06_24_T17RNH_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\FL_Zero2.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20211201\S2A_MSI_2021_12_01_16_05_11_T17RNH_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20211201\S2A_MSI_2021_12_01_16_05_11_T17RNH_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20211201\S2A_MSI_2021_12_01_16_05_11_T17RNH_rhos_665.tif"
-    # # in704 = r
-    # in833 = r"C:\_ZeroShoreline\Imagery\FL_Keys_20211201\S2A_MSI_2021_12_01_16_05_11_T17RNH_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\FL_Zero2.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\Saipan_20221203\S2A_MSI_2022_12_03_00_52_56_T55PCS_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Saipan_20221203\S2A_MSI_2022_12_03_00_52_56_T55PCS_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Saipan_20221203\S2A_MSI_2022_12_03_00_52_56_T55PCS_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Saipan_20221203\S2A_MSI_2022_12_03_00_52_56_T55PCS_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\Saipan_20221203\S2A_MSI_2022_12_03_00_52_56_T55PCS_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Saipan_Zero.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\Ponce_20221203\S2B_MSI_2022_12_03_15_08_01_T19QGV_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Ponce_20221203\S2B_MSI_2022_12_03_15_08_01_T19QGV_L2R_rhos_559.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Ponce_20221203\S2B_MSI_2022_12_03_15_08_01_T19QGV_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Ponce_20221203\S2B_MSI_2022_12_03_15_08_01_T19QGV_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\Ponce_20221203\S2B_MSI_2022_12_03_15_08_01_T19QGV_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Ponce_Zero.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\Lookout_20230306\S2A_MSI_2023_03_06_16_03_31_T18SUD_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Lookout_20230306\S2A_MSI_2023_03_06_16_03_31_T18SUD_L2R_rhos_560.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Lookout_20230306\S2A_MSI_2023_03_06_16_03_31_T18SUD_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Lookout_20230306\S2A_MSI_2023_03_06_16_03_31_T18SUD_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\Lookout_20230306\S2A_MSI_2023_03_06_16_03_31_T18SUD_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\CapeLookout.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\WakeIsland_20221223\S2B_MSI_2022_12_23_23_31_09_T58QFG_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\WakeIsland_20221223\S2B_MSI_2022_12_23_23_31_09_T58QFG_L2R_rhos_559.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\WakeIsland_20221223\S2B_MSI_2022_12_23_23_31_09_T58QFG_L2R_rhos_665.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\WakeIsland_20221223\S2B_MSI_2022_12_23_23_31_09_T58QFG_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\WakeIsland_Zero.shp"
-
-    # in492 = r"C:\_ZeroShoreline\Imagery\Nihau\S2B_MSI_2022_01_28_21_19_22_T04QCK_L2R_rhos_492.tif"
-    # in560 = r"C:\_ZeroShoreline\Imagery\Nihau\S2B_MSI_2022_01_28_21_19_22_T04QCK_L2R_rhos_559.tif"
-    # in665 = r"C:\_ZeroShoreline\Imagery\Nihau\S2B_MSI_2022_01_28_21_19_22_T04QCK_L2R_rhos_665.tif"
-    # in704 = r"C:\_ZeroShoreline\Imagery\Nihau\S2B_MSI_2022_01_28_21_19_22_T04QCK_L2R_rhos_704.tif"
-    # in833 = r"C:\_ZeroShoreline\Imagery\Nihau\S2B_MSI_2022_01_28_21_19_22_T04QCK_L2R_rhos_833.tif"
-    # land = r"C:\_ZeroShoreline\Extent\Niihua4.shp"
+    # test data    
+    in492 = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan\Nantucket_20180902\S2A_MSI_2018_09_02_15_39_09_T19TCF_L2R_rhos_492.tif"
+    in560 = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan\Nantucket_20180902\S2A_MSI_2018_09_02_15_39_09_T19TCF_L2R_rhos_560.tif"
+    in665 = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan\Nantucket_20180902\S2A_MSI_2018_09_02_15_39_09_T19TCF_L2R_rhos_665.tif"
+    in833 = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan\Nantucket_20180902\S2A_MSI_2018_09_02_15_39_09_T19TCF_L2R_rhos_833.tif"
+    # land = r"C:\Users\Matthew.Sharr\Documents\NGS\SatBathy\Data\Testing\_Bryan_SHP\Nantucket_large.shp"
+    # land = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Land\Nantucket_Zero4.shp"
+    land = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Land\Nantucket_Zero_12Jan2024.shp"
     
     # to load a saved model, 
-    in_model = r"C:\_ZeroShoreline\Model\RF_20trees_TrainedStCroix.pkl"
+    in_model = r"C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Model\RF_20trees_TrainedStCroix.pkl"
     with open(in_model, 'rb') as f:
         model = pickle.load(f)
     
     # predict 
-    prediction(in492, in560, in665, in833, land, model, out_prediction=None, write_prediction=False)
+    prediction(in492, in560, in665, in833, land, model, out_prediction=r'C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Out\Nantucket_ZS_RF_int.tif', write_prediction=True)
+    # shoreline(in492, in560, in665, in833, land, out_prediction=r'C:\Users\Matthew.Sharr\Documents\NGS\ZeroShorline\Out\Nantucket_edge.tif', write_prediction=False)
+    
+    
