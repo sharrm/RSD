@@ -32,7 +32,7 @@ resampling_method = Resampling.bilinear
 # based on https://rasterio.readthedocs.io/en/latest/topics/virtual-warping.html
 # should not need to modify anything below
 
-def resample(tif, match_tif, out_etopo):
+def resample(tif, match_tif, out_file):
                                                         
     with rasterio.open(match_tif, 'r') as dest:
         dst_crs = dest.crs
@@ -86,12 +86,12 @@ def resample(tif, match_tif, out_etopo):
 
     src, vrt = None, None
 
-    with rasterio.open(out_etopo, 'w', **options) as out:
+    with rasterio.open(out_file, 'w', **options) as out:
             out.write(data)   
     
     out = None
     
-    return out_etopo
+    return out_file
 
 def rmsez(sdb, lidar):
     print('\nComparing SDB with ground truth...')
@@ -163,22 +163,23 @@ def rmsez(sdb, lidar):
         raise Exception('Input ground truth and SDB extents do not match')
 
 if __name__ == '__main__':
+    print('__main__')
     # inputs
-    # dest_fp = r"P:\_RSD\Data\ETOPO\SDB\KeyLargo_SDB_Output\KeyLargo_LinearRegression_SDB.tif"
-    # in_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\Large\Job780732_2019_NGS_FL_topobathy_DEM_Irma.tif"
-    # out_resample_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\KeyLargo\KeyLargo_lidar_resample_warp.tif"
+    # dest_fp = 
+    # in_fp = 
+    # out_resample_fp = 
     
-    dest_fp = r'P:\\_RSD\\Data\\ETOPO\\SDB\\Saipan_SDB_Output\\Saipan_LinearRegression_SDB.tif'
-    in_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\cnmi2019_islands_dem_J922112.tif"
-    out_resample_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\Saipan_lidar_resample_warp.tif"
+    # dest_fp = r'P:\\_RSD\\Data\\ETOPO\\SDB\\Saipan_SDB_Output\\Saipan_LinearRegression_SDB.tif'
+    # in_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\cnmi2019_islands_dem_J922112.tif"
+    # out_resample_fp = r"P:\_RSD\Data\ETOPO\Ground Truth\Saipan\Saipan_lidar_resample_warp.tif"
     
     # resample, reproject, mask
-    outfile = resample(in_fp, dest_fp, out_resample_fp)
-    print(f'\nResampled output: {outfile}')
+    # outfile = resample(in_fp, dest_fp, out_resample_fp)
+    # print(f'\nResampled output: {outfile}')
     
     # grid comparison
-    mean_diff, std_dev_diff, rmse, rmse95 = rmsez(dest_fp, outfile)
-    print(f'SDB vs Ground Truth (Mean ± Std):\n{mean_diff:.3f} ± {std_dev_diff:.3f}')
-    print(f'\nSDB vs Ground Truth (RMSEz, 95% Confidence):\n{rmse:.3f}m ({rmse95:.3f}m @95%)')
+    # mean_diff, std_dev_diff, rmse, rmse95 = rmsez(dest_fp, outfile)
+    # print(f'SDB vs Ground Truth (Mean ± Std):\n{mean_diff:.3f} ± {std_dev_diff:.3f}')
+    # print(f'\nSDB vs Ground Truth (RMSEz, 95% Confidence):\n{rmse:.3f}m ({rmse95:.3f}m @95%)')
     
     
